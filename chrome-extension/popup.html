@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Consumemate</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Consumemate</h1>
+    </div>
+
+    <!-- Login View -->
+    <div id="login-view" class="view">
+      <p class="subtitle">Save articles to read or listen later</p>
+
+      <div id="phone-step" class="step">
+        <input type="tel" id="phone-input" placeholder="+1 (555) 123-4567" />
+        <button id="send-code-btn" class="primary-btn">Send Code</button>
+      </div>
+
+      <div id="code-step" class="step hidden">
+        <p class="info">Enter the 6-digit code sent to your phone</p>
+        <input type="text" id="code-input" placeholder="123456" maxlength="6" />
+        <button id="verify-code-btn" class="primary-btn">Verify</button>
+        <button id="back-btn" class="secondary-btn">Back</button>
+      </div>
+
+      <p id="login-error" class="error hidden"></p>
+    </div>
+
+    <!-- Logged In View -->
+    <div id="main-view" class="view hidden">
+      <div id="save-section">
+        <button id="save-btn" class="primary-btn large">
+          <span class="icon">+</span>
+          Save This Page
+        </button>
+      </div>
+
+      <div id="saving-section" class="hidden">
+        <div class="spinner"></div>
+        <p>Saving article...</p>
+      </div>
+
+      <div id="saved-section" class="hidden">
+        <div class="success-icon">✓</div>
+        <p class="success-message">Article saved!</p>
+        <p id="article-title" class="article-title"></p>
+      </div>
+
+      <div id="error-section" class="hidden">
+        <p class="error" id="save-error"></p>
+        <button id="retry-btn" class="secondary-btn">Try Again</button>
+      </div>
+
+      <div class="footer">
+        <span id="user-phone" class="user-info"></span>
+        <button id="logout-btn" class="text-btn">Logout</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "consumemate",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "chrome-extension",
+    "mobile"
+  ],
+  "scripts": {
+    "backend": "npm run dev --workspace=backend",
+    "extension": "npm run dev --workspace=chrome-extension",
+    "mobile": "npm run start --workspace=mobile"
+  }
+}

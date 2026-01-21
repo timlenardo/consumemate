@@ -1,0 +1,198 @@
+import { z } from 'zod'
+import { endpoint, endpointAuth } from '@middleware/endpoint'
+import * as articleService from '@services/articleService'
+import * as ttsService from '@services/ttsService'
+import { env } from '@config/env'
+
+export const saveArticle = endpointAuth(
+  async (req) => {
+    const { url, html } = req.body
+    const article = await articleService.saveArticle(req.auth.accountId, url, html)
+    return {
+      id: article.id,
+      url: article.url,
+      title: article.title,
+      author: article.author,
+      siteName: article.siteName,
+      excerpt: article.excerpt,
+      featuredImage: article.featuredImage,
+      wordCount: article.wordCount,
+      estimatedReadingTime: article.estimatedReadingTime,
+      isRead: article.isRead,
+      publicSlug: article.publicSlug,
+      publicUrl: `${env.publicUrl}/read/${article.publicSlug}`,
+      createdAt: article.createdAt,
+    }
+  },
+  z.object({
+    body: z.object({
+      url: z.string().url(),
+      html: z.string(),
+    }),
+  })
+)
+
+export const getArticles = endpointAuth(
+  async (req) => {
+    const filter = (req.query.filter as 'all' | 'read' | 'unread') || 'all'
+    const articles = await articleService.getArticles(req.auth.accountId, filter)
+
+    return articles.map(article => ({
+      id: article.id,
+      url: article.url,
+      title: article.title,
+      author: article.author,
+      siteName: article.siteName,
+      excerpt: article.excerpt,
+      featuredImage: article.featuredImage,
+      wordCount: article.wordCount,
+      estimatedReadingTime: article.estimatedReadingTime,
+      isRead: article.isRead,
+      readAt: article.readAt,
+      publicSlug: article.publicSlug,
+      publicUrl: `${env.publicUrl}/read/${article.publicSlug}`,
+      hasAudio: !!article.audioUrl,
+      createdAt: article.createdAt,
+    }))
+  },
+  z.object({
+    query: z.object({
+      filter: z.enum(['all', 'read', 'unread']).optional(),
+    }),
+  })
+)
+
+export const getArticle = endpointAuth(
+  async (req) => {
+    const articleId = parseInt(req.params.id, 10)
+    const article = await articleService.getArticle(req.auth.accountId, articleId)
+
+    return {
+      id: article.id,
+      url: article.url,
+      title: article.title,
+      author: article.author,
+      siteName: article.siteName,
+      excerpt: article.excerpt,
+      contentMarkdown: article.contentMarkdown,
+      contentHtml: article.contentHtml,
+      featuredImage: article.featuredImage,
+      wordCount: article.wordCount,
+      estimatedReadingTime: article.estimatedReadingTime,
+      isRead: article.isRead,
+      readAt: article.readAt,
+      publicSlug: article.publicSlug,
+      publicUrl: `${env.publicUrl}/read/${article.publicSlug}`,
+      audioUrl: article.audioUrl,
+      audioVoiceId: article.audioVoiceId,
+      createdAt: article.createdAt,
+    }
+  },
+  z.object({
+    params: z.object({
+      id: z.string(),
+    }),
+  })
+)
+
+export const markAsRead = endpointAuth(
+  async (req) => {
+    const articleId = parseInt(req.params.id, 10)
+    const article = await articleService.markArticleAsRead(req.auth.accountId, articleId)
+    return { success: true, isRead: article.isRead }
+  },
+  z.object({
+    params: z.object({
+      id: z.string(),
+    }),
+  })
+)
+
+export const markAsUnread = endpointAuth(
+  async (req) => {
+    const articleId = parseInt(req.params.id, 10)
+    const article = await articleService.markArticleAsUnread(req.auth.accountId, articleId)
+    return { success: true, isRead: article.isRead }
+  },
+  z.object({
+    params: z.object({
+      id: z.string(),
+    }),
+  })
+)
+
+export const deleteArticle = endpointAuth(
+  async (req) => {
+    const articleId = parseInt(req.params.id, 10)
+    await articleService.deleteArticle(req.auth.accountId, articleId)
+    return { success: true }
+  },
+  z.object({
+    params: z.object({
+      id: z.string(),
+    }),
+  })
+)
+
+export const generateAudio = endpointAuth(
+  async (req) => {
+    const articleId = parseInt(req.params.id, 10)
+    const { voiceId } = req.body
+
+    const article = await articleService.getArticle(req.auth.accountId, articleId)
+
+    // Generate audio from markdown content (stripped of formatting)
+    const plainText = article.contentMarkdown
+      .replace(/!\[.*?\]\(.*?\)/g, '') // Remove images
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // Convert links to text
+      .replace(/[#*`_~]/g, '') // Remove markdown formatting
+      .replace(/\n{3,}/g, '\n\n') // Normalize line breaks
+      .trim()
+
+    const audioBuffer = await ttsService.generateSpeech(plainText, voiceId)
+
+    // For now, return audio as base64 - in production you'd upload to S3/cloud storage
+    const audioBase64 = audioBuffer.toString('base64')
+
+    return {
+      audioData: audioBase64,
+      contentType: 'audio/mpeg',
+    }
+  },
+  z.object({
+    params: z.object({
+      id: z.string(),
+    }),
+    body: z.object({
+      voiceId: z.string(),
+    }),
+  })
+)
+
+// Public endpoint - no auth required
+export const getPublicArticle = endpoint(
+  async (req) => {
+    const { slug } = req.params
+    const article = await articleService.getArticleBySlug(slug)
+
+    return {
+      id: article.id,
+      title: article.title,
+      author: article.author,
+      siteName: article.siteName,
+      excerpt: article.excerpt,
+      contentHtml: article.contentHtml,
+      featuredImage: article.featuredImage,
+      wordCount: article.wordCount,
+      estimatedReadingTime: article.estimatedReadingTime,
+      originalUrl: article.url,
+      savedBy: article.account?.name || 'A Consumemate user',
+      createdAt: article.createdAt,
+    }
+  },
+  z.object({
+    params: z.object({
+      slug: z.string(),
+    }),
+  })
+)
