@@ -229,3 +229,29 @@ export async function updateArticleAudio(
 
   return articleRepo.findOneOrFail({ where: { id: articleId } })
 }
+
+export async function clearArticleAudio(
+  accountId: number,
+  articleId: number
+): Promise<Article> {
+  const articleRepo = AppDataSource.getRepository(Article)
+
+  // Verify ownership
+  const article = await articleRepo.findOne({
+    where: { id: articleId, account: { id: accountId } },
+  })
+
+  if (!article) {
+    throw new NotFoundError('Article not found')
+  }
+
+  await articleRepo.update(articleId, {
+    audioData: null,
+    audioUrl: null,
+    audioVoiceId: null,
+    audioWordTimings: null,
+    audioProcessedText: null,
+  })
+
+  return articleRepo.findOneOrFail({ where: { id: articleId } })
+}

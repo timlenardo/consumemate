@@ -191,6 +191,19 @@ export const generateAudio = endpointAuth(
   })
 )
 
+export const clearAudio = endpointAuth(
+  async (req) => {
+    const articleId = parseInt(req.params.id, 10)
+    await articleService.clearArticleAudio(req.auth.accountId, articleId)
+    return { success: true }
+  },
+  z.object({
+    params: z.object({
+      id: z.string(),
+    }),
+  })
+)
+
 // Public endpoint - no auth required
 export const getPublicArticle = endpoint(
   async (req) => {

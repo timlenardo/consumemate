@@ -12,5 +12,6 @@ router.post('/:id/read', ...endpointToArrayAuth(articleController.markAsRead))
 router.post('/:id/unread', ...endpointToArrayAuth(articleController.markAsUnread))
 router.delete('/:id', ...endpointToArrayAuth(articleController.deleteArticle))
 router.post('/:id/audio', ...endpointToArrayAuth(articleController.generateAudio))
+router.delete('/:id/audio', ...endpointToArrayAuth(articleController.clearAudio))
 
 export default router

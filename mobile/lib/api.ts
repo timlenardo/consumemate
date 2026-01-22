@@ -172,6 +172,10 @@ class ApiClient {
     })
   }
 
+  async clearAudio(id: number): Promise<void> {
+    await this.request(`/v1/articles/${id}/audio`, { method: 'DELETE' })
+  }
+
   // Voices
   async getVoices(): Promise<{ voices: Voice[] }> {
     return this.request('/voices')

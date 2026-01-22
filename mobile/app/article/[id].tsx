@@ -274,6 +274,40 @@ export default function ArticleScreen() {
     }
   }
 
+  // Clear cached audio
+  const handleClearAudio = async () => {
+    if (!article) return
+
+    Alert.alert(
+      'Clear Audio',
+      'This will delete the cached audio for this article. You can re-transcribe it afterwards.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await api.clearAudio(article.id)
+              setArticle({ ...article, audioUrl: null, audioVoiceId: null })
+              // Stop any playing audio
+              if (soundRef.current) {
+                await soundRef.current.stopAsync()
+                await soundRef.current.unloadAsync()
+                soundRef.current = null
+              }
+              setShowPlayerControls(false)
+              setIsPlaying(false)
+              Alert.alert('Success', 'Audio cleared. You can now re-transcribe the article.')
+            } catch (error: any) {
+              showErrorAlert('Error', error.message || 'Failed to clear audio')
+            }
+          },
+        },
+      ]
+    )
+  }
+
   // Handle audio button press
   const handleAudioButtonPress = async () => {
     if (!article) return
@@ -645,6 +679,7 @@ export default function ArticleScreen() {
         <TouchableOpacity
           style={[styles.actionButton, audioLoading && styles.actionButtonDisabled]}
           onPress={handleAudioButtonPress}
+          onLongPress={hasExistingAudio ? handleClearAudio : undefined}
           disabled={audioLoading}
         >
           {audioLoading ? (
