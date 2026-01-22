@@ -11,16 +11,22 @@ const turndownService = new TurndownService({
   codeBlockStyle: 'fenced',
 })
 
-// Keep images in markdown
+// Remove images from markdown (they clutter the reading experience)
 turndownService.addRule('images', {
   filter: 'img',
-  replacement: (content, node) => {
-    const img = node as HTMLImageElement
-    const alt = img.alt || ''
-    const src = img.src || ''
-    const title = img.title ? ` "${img.title}"` : ''
-    return src ? `![${alt}](${src}${title})` : ''
-  },
+  replacement: () => '',
+})
+
+// Also remove figure elements (often wrap images)
+turndownService.addRule('figures', {
+  filter: 'figure',
+  replacement: () => '',
+})
+
+// Remove picture elements
+turndownService.addRule('pictures', {
+  filter: 'picture',
+  replacement: () => '',
 })
 
 interface ParsedArticle {
