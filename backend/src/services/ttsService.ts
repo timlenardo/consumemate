@@ -50,60 +50,25 @@ class ElevenLabsTTSProvider implements TTSProvider {
       processedText += ' ... Article truncated for audio preview.'
     }
 
-    // Use convertWithTimestamps to get word-level timing data
-    const response = await this.client.textToSpeech.convertWithTimestamps(voiceId, {
+    // Use regular convert for speed (convertWithTimestamps is too slow for Heroku's 30s timeout)
+    // TODO: Implement async audio generation to enable word timestamps
+    const response = await this.client.textToSpeech.convert(voiceId, {
       text: processedText,
       modelId: 'eleven_multilingual_v2',
     })
 
-    // Response contains audio_base64 and alignment data
-    const audioBuffer = Buffer.from(response.audioBase64, 'base64')
-
-    // Parse alignment data to get word timings
-    const wordTimings: WordTiming[] = []
-    if (response.alignment) {
-      const { characters, characterStartTimesSeconds, characterEndTimesSeconds } = response.alignment
-
-      // Group characters into words
-      let currentWord = ''
-      let wordStart: number | null = null
-      let wordEnd: number = 0
-
-      for (let i = 0; i < characters.length; i++) {
-        const char = characters[i]
-        const startTime = characterStartTimesSeconds[i] * 1000  // Convert to ms
-        const endTime = characterEndTimesSeconds[i] * 1000
-
-        if (char === ' ' || char === '\n') {
-          // End of word
-          if (currentWord.length > 0 && wordStart !== null) {
-            wordTimings.push({
-              word: currentWord,
-              start: wordStart,
-              end: wordEnd,
-            })
-          }
-          currentWord = ''
-          wordStart = null
-        } else {
-          // Part of a word
-          if (wordStart === null) {
-            wordStart = startTime
-          }
-          currentWord += char
-          wordEnd = endTime
-        }
-      }
-
-      // Don't forget the last word
-      if (currentWord.length > 0 && wordStart !== null) {
-        wordTimings.push({
-          word: currentWord,
-          start: wordStart,
-          end: wordEnd,
-        })
-      }
+    // Convert stream to buffer
+    const chunks: Buffer[] = []
+    const reader = response.getReader()
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(Buffer.from(value))
     }
+    const audioBuffer = Buffer.concat(chunks)
+
+    // No word timings with regular convert (would need convertWithTimestamps)
+    const wordTimings: WordTiming[] = []
 
     return {
       audio: audioBuffer,
