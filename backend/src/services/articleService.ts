@@ -213,13 +213,13 @@ export async function deleteArticle(
 
 export async function updateArticleAudio(
   articleId: number,
-  audioUrl: string,
+  audioData: string,
   voiceId: string
 ): Promise<Article> {
   const articleRepo = AppDataSource.getRepository(Article)
 
   await articleRepo.update(articleId, {
-    audioUrl,
+    audioData,
     audioVoiceId: voiceId,
   })
 

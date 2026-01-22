@@ -141,6 +141,15 @@ export const generateAudio = endpointAuth(
 
     const article = await articleService.getArticle(req.auth.accountId, articleId)
 
+    // Check if we already have cached audio for this voice
+    if (article.audioData && article.audioVoiceId === voiceId) {
+      return {
+        audioData: article.audioData,
+        contentType: 'audio/mpeg',
+        cached: true,
+      }
+    }
+
     // Generate audio from markdown content (stripped of formatting)
     const plainText = article.contentMarkdown
       .replace(/!\[.*?\]\(.*?\)/g, '') // Remove images
@@ -150,13 +159,15 @@ export const generateAudio = endpointAuth(
       .trim()
 
     const audioBuffer = await ttsService.generateSpeech(plainText, voiceId)
-
-    // For now, return audio as base64 - in production you'd upload to S3/cloud storage
     const audioBase64 = audioBuffer.toString('base64')
+
+    // Save the generated audio to the database
+    await articleService.updateArticleAudio(articleId, audioBase64, voiceId)
 
     return {
       audioData: audioBase64,
       contentType: 'audio/mpeg',
+      cached: false,
     }
   },
   z.object({

@@ -63,6 +63,9 @@ export class Article {
   @Column({ type: 'text', nullable: true })
   audioVoiceId: string | null
 
+  @Column({ type: 'text', nullable: true })
+  audioData: string | null
+
   @CreateDateColumn()
   createdAt: Date
 
