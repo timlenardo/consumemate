@@ -10,13 +10,15 @@ const isRemoteDb = process.env.DATABASE_URL?.includes('amazonaws.com') ||
                    process.env.DATABASE_URL?.includes('heroku') ||
                    process.env.NODE_ENV === 'production'
 
+const isProduction = process.env.NODE_ENV === 'production'
+
 export const AppDataSource = new DataSource({
   type: 'postgres',
   url: process.env.DATABASE_URL,
   ssl: isRemoteDb ? { rejectUnauthorized: false } : false,
   synchronize: false,
-  logging: process.env.NODE_ENV === 'development',
+  logging: !isProduction,
   namingStrategy: new SnakeNamingStrategy(),
   entities: [Account, Article, VerificationCode],
-  migrations: ['src/migrations/*.ts'],
+  migrations: isProduction ? ['dist/migrations/*.js'] : ['src/migrations/*.ts'],
 })
