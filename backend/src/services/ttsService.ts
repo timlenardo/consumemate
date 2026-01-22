@@ -104,16 +104,22 @@ class ElevenLabsTTSProvider implements TTSProvider {
 
   async generateSpeech(text: string, voiceId: string): Promise<SpeechResult> {
     const textChunks = this.splitIntoChunks(text)
-    console.log(`Processing ${textChunks.length} chunks for TTS (total ${text.length} chars)`)
+    console.log(`Processing ${textChunks.length} chunks for TTS in parallel (total ${text.length} chars)`)
 
-    // Process all chunks and collect audio buffers
-    const audioBuffers: Buffer[] = []
+    // Process all chunks in parallel for speed (Heroku has 30s timeout)
+    const chunkPromises = textChunks.map((chunk, i) => {
+      console.log(`Starting chunk ${i + 1}/${textChunks.length} (${chunk.length} chars)`)
+      return this.convertChunkToAudio(chunk, voiceId).then(buffer => {
+        console.log(`Completed chunk ${i + 1}/${textChunks.length}`)
+        return { index: i, buffer }
+      })
+    })
 
-    for (let i = 0; i < textChunks.length; i++) {
-      console.log(`Processing chunk ${i + 1}/${textChunks.length} (${textChunks[i].length} chars)`)
-      const audioBuffer = await this.convertChunkToAudio(textChunks[i], voiceId)
-      audioBuffers.push(audioBuffer)
-    }
+    const results = await Promise.all(chunkPromises)
+
+    // Sort by index to maintain order, then extract buffers
+    results.sort((a, b) => a.index - b.index)
+    const audioBuffers = results.map(r => r.buffer)
 
     // Concatenate all audio buffers
     const combinedAudio = Buffer.concat(audioBuffers)
