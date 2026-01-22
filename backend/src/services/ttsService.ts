@@ -31,9 +31,24 @@ export interface Voice {
 class ElevenLabsTTSProvider implements TTSProvider {
   private client: ElevenLabsClient
   private readonly MAX_CHUNK_CHARS = 4500
+  // TODO: Set to false for production - limits to ~100 words to conserve API quota
+  private readonly TEST_MODE = true
+  private readonly TEST_MODE_WORD_LIMIT = 100
 
   constructor(apiKey: string) {
     this.client = new ElevenLabsClient({ apiKey })
+  }
+
+  // Truncate text to word limit for testing (conserves API quota)
+  private truncateForTesting(text: string): string {
+    if (!this.TEST_MODE) return text
+
+    const words = text.split(/\s+/)
+    if (words.length <= this.TEST_MODE_WORD_LIMIT) return text
+
+    const truncated = words.slice(0, this.TEST_MODE_WORD_LIMIT).join(' ')
+    console.log(`[TEST MODE] Truncated from ${words.length} to ${this.TEST_MODE_WORD_LIMIT} words`)
+    return truncated + '... (truncated for testing)'
   }
 
   // Clean text for TTS - remove URLs and convert markdown links to plain text
@@ -139,8 +154,11 @@ class ElevenLabsTTSProvider implements TTSProvider {
 
   async generateSpeech(text: string, voiceId: string): Promise<SpeechResult> {
     // Clean text for speech - remove URLs, convert markdown links to text
-    const cleanedText = this.prepareTextForSpeech(text)
+    let cleanedText = this.prepareTextForSpeech(text)
     console.log(`Cleaned text: ${text.length} -> ${cleanedText.length} chars`)
+
+    // Truncate for testing to conserve API quota
+    cleanedText = this.truncateForTesting(cleanedText)
 
     const textChunks = this.splitIntoChunks(cleanedText)
     console.log(`Processing ${textChunks.length} chunks for TTS in parallel (total ${cleanedText.length} chars)`)
