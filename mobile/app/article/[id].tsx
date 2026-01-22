@@ -475,7 +475,7 @@ export default function ArticleScreen() {
     }
   }
 
-  const handleShareQuote = async () => {
+  const shareQuoteCard = async () => {
     if (!selectedText || !article) return
 
     try {
@@ -1009,7 +1009,7 @@ export default function ArticleScreen() {
             <View style={styles.shareButtons}>
               <TouchableOpacity
                 style={[styles.shareButton, { backgroundColor: '#1DA1F2' }]}
-                onPress={handleShareQuote}
+                onPress={shareQuoteCard}
               >
                 <Ionicons name="logo-twitter" size={20} color="#fff" />
                 <Text style={styles.shareButtonText}>Share to Twitter</Text>
