@@ -7,9 +7,14 @@
     "chrome-extension",
     "mobile"
   ],
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "backend": "npm run dev --workspace=backend",
     "extension": "npm run dev --workspace=chrome-extension",
-    "mobile": "npm run start --workspace=mobile"
+    "mobile": "npm run start --workspace=mobile",
+    "heroku-postbuild": "npm run build --workspace=backend",
+    "start": "npm run start --workspace=backend"
   }
 }

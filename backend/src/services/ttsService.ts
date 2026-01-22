@@ -1,9 +1,22 @@
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js'
 import { env } from '@config/env'
 
+// Word timing for text-audio sync
+export interface WordTiming {
+  word: string
+  start: number  // start time in milliseconds
+  end: number    // end time in milliseconds
+}
+
+export interface SpeechResult {
+  audio: Buffer
+  wordTimings: WordTiming[]
+  processedText: string  // The actual text that was converted to speech
+}
+
 // TTS Provider interface for easy swapping
 export interface TTSProvider {
-  generateSpeech(text: string, voiceId: string): Promise<Buffer>
+  generateSpeech(text: string, voiceId: string): Promise<SpeechResult>
   getVoices(): Promise<Voice[]>
 }
 
@@ -22,7 +35,7 @@ class ElevenLabsTTSProvider implements TTSProvider {
     this.client = new ElevenLabsClient({ apiKey })
   }
 
-  async generateSpeech(text: string, voiceId: string): Promise<Buffer> {
+  async generateSpeech(text: string, voiceId: string): Promise<SpeechResult> {
     // ElevenLabs has a ~5000 character limit per request
     // Truncate long text for now (TODO: implement chunking for full articles)
     const MAX_CHARS = 4500
@@ -37,21 +50,66 @@ class ElevenLabsTTSProvider implements TTSProvider {
       processedText += ' ... Article truncated for audio preview.'
     }
 
-    const response = await this.client.textToSpeech.convert(voiceId, {
+    // Use convertWithTimestamps to get word-level timing data
+    const response = await this.client.textToSpeech.convertWithTimestamps(voiceId, {
       text: processedText,
       modelId: 'eleven_multilingual_v2',
     })
 
-    // Convert stream to buffer
-    const chunks: Buffer[] = []
-    const reader = response.getReader()
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      chunks.push(Buffer.from(value))
+    // Response contains audio_base64 and alignment data
+    const audioBuffer = Buffer.from(response.audioBase64, 'base64')
+
+    // Parse alignment data to get word timings
+    const wordTimings: WordTiming[] = []
+    if (response.alignment) {
+      const { characters, characterStartTimesSeconds, characterEndTimesSeconds } = response.alignment
+
+      // Group characters into words
+      let currentWord = ''
+      let wordStart: number | null = null
+      let wordEnd: number = 0
+
+      for (let i = 0; i < characters.length; i++) {
+        const char = characters[i]
+        const startTime = characterStartTimesSeconds[i] * 1000  // Convert to ms
+        const endTime = characterEndTimesSeconds[i] * 1000
+
+        if (char === ' ' || char === '\n') {
+          // End of word
+          if (currentWord.length > 0 && wordStart !== null) {
+            wordTimings.push({
+              word: currentWord,
+              start: wordStart,
+              end: wordEnd,
+            })
+          }
+          currentWord = ''
+          wordStart = null
+        } else {
+          // Part of a word
+          if (wordStart === null) {
+            wordStart = startTime
+          }
+          currentWord += char
+          wordEnd = endTime
+        }
+      }
+
+      // Don't forget the last word
+      if (currentWord.length > 0 && wordStart !== null) {
+        wordTimings.push({
+          word: currentWord,
+          start: wordStart,
+          end: wordEnd,
+        })
+      }
     }
 
-    return Buffer.concat(chunks)
+    return {
+      audio: audioBuffer,
+      wordTimings,
+      processedText,
+    }
   }
 
   async getVoices(): Promise<Voice[]> {
@@ -94,7 +152,7 @@ export function getTTSProvider(): TTSProvider {
 }
 
 // Convenience exports
-export async function generateSpeech(text: string, voiceId: string): Promise<Buffer> {
+export async function generateSpeech(text: string, voiceId: string): Promise<SpeechResult> {
   return getTTSProvider().generateSpeech(text, voiceId)
 }
 

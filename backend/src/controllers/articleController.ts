@@ -146,6 +146,8 @@ export const generateAudio = endpointAuth(
       return {
         audioData: article.audioData,
         contentType: 'audio/mpeg',
+        wordTimings: article.audioWordTimings ? JSON.parse(article.audioWordTimings) : [],
+        processedText: article.audioProcessedText || '',
         cached: true,
       }
     }
@@ -158,15 +160,24 @@ export const generateAudio = endpointAuth(
       .replace(/\n{3,}/g, '\n\n') // Normalize line breaks
       .trim()
 
-    const audioBuffer = await ttsService.generateSpeech(plainText, voiceId)
-    const audioBase64 = audioBuffer.toString('base64')
+    const speechResult = await ttsService.generateSpeech(plainText, voiceId)
+    const audioBase64 = speechResult.audio.toString('base64')
+    const wordTimingsJson = JSON.stringify(speechResult.wordTimings)
 
     // Save the generated audio to the database
-    await articleService.updateArticleAudio(articleId, audioBase64, voiceId)
+    await articleService.updateArticleAudio(
+      articleId,
+      audioBase64,
+      voiceId,
+      wordTimingsJson,
+      speechResult.processedText
+    )
 
     return {
       audioData: audioBase64,
       contentType: 'audio/mpeg',
+      wordTimings: speechResult.wordTimings,
+      processedText: speechResult.processedText,
       cached: false,
     }
   },

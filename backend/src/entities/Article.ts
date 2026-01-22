@@ -66,6 +66,12 @@ export class Article {
   @Column({ type: 'text', nullable: true })
   audioData: string | null
 
+  @Column({ type: 'text', nullable: true })
+  audioWordTimings: string | null  // JSON string of WordTiming[]
+
+  @Column({ type: 'text', nullable: true })
+  audioProcessedText: string | null  // The text that was actually converted to audio
+
   @CreateDateColumn()
   createdAt: Date
 

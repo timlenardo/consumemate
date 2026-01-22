@@ -5,8 +5,8 @@
   "main": "dist/app.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only -r tsconfig-paths/register src/app.ts",
-    "build": "tsc",
-    "start": "node -r tsconfig-paths/register dist/app.js",
+    "build": "tsc && tsc-alias",
+    "start": "node dist/app.js",
     "typeorm": "typeorm-ts-node-commonjs -d src/config/database.ts",
     "migration:generate": "npm run typeorm migration:generate src/migrations/$npm_config_name",
     "migration:run": "npm run typeorm migration:run",
@@ -38,6 +38,7 @@
     "@types/turndown": "^5.0.5",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
+    "tsc-alias": "^1.8.16",
     "tsconfig-paths": "^4.2.0",
     "typeorm-naming-strategies": "^4.1.0",
     "typescript": "^5.5.4"

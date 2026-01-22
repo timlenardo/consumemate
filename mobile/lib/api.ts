@@ -43,6 +43,12 @@ export interface Voice {
   category?: string
 }
 
+export interface WordTiming {
+  word: string
+  start: number  // start time in milliseconds
+  end: number    // end time in milliseconds
+}
+
 class ApiClient {
   private token: string | null = null
 
@@ -154,6 +160,8 @@ class ApiClient {
   async generateAudio(id: number, voiceId: string): Promise<{
     audioData: string
     contentType: string
+    wordTimings: WordTiming[]
+    processedText: string
   }> {
     return this.request(`/v1/articles/${id}/audio`, {
       method: 'POST',

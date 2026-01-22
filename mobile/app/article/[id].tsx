@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   View,
   Text,
@@ -12,15 +12,19 @@ import {
   Share,
   Linking,
 } from 'react-native'
+import Slider from '@react-native-community/slider'
 import * as Clipboard from 'expo-clipboard'
 import { useLocalSearchParams, router } from 'expo-router'
-import { Audio } from 'expo-av'
+import { Audio, AVPlaybackStatus } from 'expo-av'
 import { Ionicons } from '@expo/vector-icons'
 import ViewShot from 'react-native-view-shot'
 import * as Sharing from 'expo-sharing'
 import { colors, spacing, borderRadius } from '@/constants/theme'
-import { api, Article, Voice } from '@/lib/api'
+import { api, Article, Voice, WordTiming } from '@/lib/api'
 import { useAuth } from '@/lib/AuthContext'
+
+const PLAYBACK_SPEEDS = [1.0, 1.2, 1.5, 1.7, 2.0]
+const SKIP_SECONDS = 15
 
 // Helper to show error with copy button
 function showErrorAlert(title: string, message: string) {
@@ -50,6 +54,12 @@ export default function ArticleScreen() {
   const [loading, setLoading] = useState(true)
   const [audioLoading, setAudioLoading] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [audioPosition, setAudioPosition] = useState(0)
+  const [audioDuration, setAudioDuration] = useState(0)
+  const [playbackSpeed, setPlaybackSpeed] = useState(1.0)
+  const [showPlayerControls, setShowPlayerControls] = useState(false)
+  const [wordTimings, setWordTimings] = useState<WordTiming[]>([])
+  const [audioText, setAudioText] = useState('')
   const [selectedText, setSelectedText] = useState('')
   const [showShareModal, setShowShareModal] = useState(false)
   const [voices, setVoices] = useState<Voice[]>([])
@@ -57,6 +67,7 @@ export default function ArticleScreen() {
 
   const soundRef = useRef<Audio.Sound | null>(null)
   const viewShotRef = useRef<ViewShot>(null)
+  const scrollViewRef = useRef<ScrollView>(null)
 
   useEffect(() => {
     loadArticle()
@@ -147,14 +158,20 @@ export default function ArticleScreen() {
         soundRef.current = null
       }
 
-      const { audioData, contentType } = await api.generateAudio(article.id, selectedVoiceId)
+      const { audioData, contentType, wordTimings: timings, processedText } = await api.generateAudio(article.id, selectedVoiceId)
+
+      // Store word timings for text highlighting
+      setWordTimings(timings || [])
+      setAudioText(processedText || '')
 
       const { sound } = await Audio.Sound.createAsync(
         { uri: `data:${contentType};base64,${audioData}` },
-        { shouldPlay: true },
-        (status) => {
+        { shouldPlay: true, rate: playbackSpeed, shouldCorrectPitch: true },
+        (status: AVPlaybackStatus) => {
           if (status.isLoaded) {
             setIsPlaying(status.isPlaying)
+            setAudioPosition(status.positionMillis)
+            setAudioDuration(status.durationMillis || 0)
             if (status.didJustFinish) {
               setIsPlaying(false)
             }
@@ -164,6 +181,7 @@ export default function ArticleScreen() {
 
       soundRef.current = sound
       setIsPlaying(true)
+      setShowPlayerControls(true)
     } catch (error: any) {
       showErrorAlert('Audio Error', error.message || 'Failed to generate audio')
     } finally {
@@ -187,6 +205,44 @@ export default function ArticleScreen() {
     } else {
       await soundRef.current.playAsync()
     }
+  }
+
+  const handleSeek = async (positionMillis: number) => {
+    if (soundRef.current) {
+      await soundRef.current.setPositionAsync(positionMillis)
+    }
+  }
+
+  const handleSkipForward = async () => {
+    if (soundRef.current) {
+      const newPosition = Math.min(audioPosition + SKIP_SECONDS * 1000, audioDuration)
+      await soundRef.current.setPositionAsync(newPosition)
+    }
+  }
+
+  const handleSkipBack = async () => {
+    if (soundRef.current) {
+      const newPosition = Math.max(audioPosition - SKIP_SECONDS * 1000, 0)
+      await soundRef.current.setPositionAsync(newPosition)
+    }
+  }
+
+  const handleChangeSpeed = async () => {
+    const currentIndex = PLAYBACK_SPEEDS.indexOf(playbackSpeed)
+    const nextIndex = (currentIndex + 1) % PLAYBACK_SPEEDS.length
+    const newSpeed = PLAYBACK_SPEEDS[nextIndex]
+    setPlaybackSpeed(newSpeed)
+
+    if (soundRef.current) {
+      await soundRef.current.setRateAsync(newSpeed, true)
+    }
+  }
+
+  const formatTime = (millis: number) => {
+    const totalSeconds = Math.floor(millis / 1000)
+    const minutes = Math.floor(totalSeconds / 60)
+    const seconds = totalSeconds % 60
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`
   }
 
   const handleShare = async () => {
@@ -240,6 +296,57 @@ export default function ArticleScreen() {
       setSelectedText(text)
       setShowShareModal(true)
     }
+  }
+
+  // Calculate current word index based on audio position
+  const currentWordIndex = useMemo(() => {
+    if (!wordTimings.length || audioPosition === 0) return -1
+
+    // Find the word that contains the current position
+    for (let i = 0; i < wordTimings.length; i++) {
+      const timing = wordTimings[i]
+      if (audioPosition >= timing.start && audioPosition <= timing.end) {
+        return i
+      }
+      // If we're between words, return the last word that ended
+      if (i < wordTimings.length - 1 && audioPosition > timing.end && audioPosition < wordTimings[i + 1].start) {
+        return i
+      }
+    }
+
+    // If past all words, return the last word
+    if (wordTimings.length > 0 && audioPosition > wordTimings[wordTimings.length - 1].end) {
+      return wordTimings.length - 1
+    }
+
+    return -1
+  }, [wordTimings, audioPosition])
+
+  // Render text with word highlighting
+  const renderHighlightedText = () => {
+    if (!wordTimings.length) return null
+
+    return (
+      <Text style={[styles.paragraph, { color: theme.text }]} selectable>
+        {wordTimings.map((timing, index) => {
+          const isCurrentWord = index === currentWordIndex
+          const isReadWord = index < currentWordIndex
+
+          return (
+            <Text
+              key={index}
+              style={[
+                isCurrentWord && styles.currentWord,
+                isReadWord && styles.readWord,
+              ]}
+            >
+              {timing.word}
+              {index < wordTimings.length - 1 ? ' ' : ''}
+            </Text>
+          )
+        })}
+      </Text>
+    )
   }
 
   if (loading) {
@@ -302,7 +409,11 @@ export default function ArticleScreen() {
       </View>
 
       {/* Article content */}
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+      <ScrollView
+        ref={scrollViewRef}
+        style={styles.scroll}
+        contentContainerStyle={[styles.content, showPlayerControls && styles.contentWithPlayer]}
+      >
         <Text style={[styles.siteName, { color: theme.textMuted }]}>
           {article.siteName || new URL(article.url).hostname}
         </Text>
@@ -320,16 +431,22 @@ export default function ArticleScreen() {
         </Text>
 
         <View style={styles.articleBody}>
-          {paragraphs.map((paragraph, index) => (
-            <Text
-              key={index}
-              style={[styles.paragraph, { color: theme.text }]}
-              selectable
-              onLongPress={() => handleTextSelection(paragraph)}
-            >
-              {paragraph}
-            </Text>
-          ))}
+          {showPlayerControls && wordTimings.length > 0 ? (
+            // Show audio text with word highlighting when playing
+            renderHighlightedText()
+          ) : (
+            // Show original paragraphs when not playing
+            paragraphs.map((paragraph, index) => (
+              <Text
+                key={index}
+                style={[styles.paragraph, { color: theme.text }]}
+                selectable
+                onLongPress={() => handleTextSelection(paragraph)}
+              >
+                {paragraph}
+              </Text>
+            ))
+          )}
         </View>
       </ScrollView>
 
@@ -408,6 +525,86 @@ export default function ArticleScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Bottom Audio Player Controls */}
+      {showPlayerControls && (
+        <View style={[styles.bottomPlayer, { backgroundColor: theme.surface, borderTopColor: theme.border }]}>
+          {/* Progress Bar */}
+          <View style={styles.progressContainer}>
+            <Text style={[styles.timeText, { color: theme.textMuted }]}>
+              {formatTime(audioPosition)}
+            </Text>
+            <Slider
+              style={styles.slider}
+              minimumValue={0}
+              maximumValue={audioDuration}
+              value={audioPosition}
+              onSlidingComplete={handleSeek}
+              minimumTrackTintColor={theme.primary}
+              maximumTrackTintColor={theme.border}
+              thumbTintColor={theme.primary}
+            />
+            <Text style={[styles.timeText, { color: theme.textMuted }]}>
+              {formatTime(audioDuration)}
+            </Text>
+          </View>
+
+          {/* Playback Controls */}
+          <View style={styles.playbackControls}>
+            {/* Speed Button */}
+            <TouchableOpacity
+              style={[styles.speedButton, { backgroundColor: theme.background }]}
+              onPress={handleChangeSpeed}
+            >
+              <Text style={[styles.speedText, { color: theme.text }]}>
+                {playbackSpeed}x
+              </Text>
+            </TouchableOpacity>
+
+            {/* Skip Back */}
+            <TouchableOpacity style={styles.controlButton} onPress={handleSkipBack}>
+              <Ionicons name="play-back" size={28} color={theme.text} />
+              <Text style={[styles.skipLabel, { color: theme.textMuted }]}>15</Text>
+            </TouchableOpacity>
+
+            {/* Play/Pause */}
+            <TouchableOpacity
+              style={[styles.playButton, { backgroundColor: theme.primary }]}
+              onPress={handleTogglePlayback}
+            >
+              <Ionicons
+                name={isPlaying ? 'pause' : 'play'}
+                size={32}
+                color="#fff"
+              />
+            </TouchableOpacity>
+
+            {/* Skip Forward */}
+            <TouchableOpacity style={styles.controlButton} onPress={handleSkipForward}>
+              <Ionicons name="play-forward" size={28} color={theme.text} />
+              <Text style={[styles.skipLabel, { color: theme.textMuted }]}>15</Text>
+            </TouchableOpacity>
+
+            {/* Close Button */}
+            <TouchableOpacity
+              style={styles.closePlayerButton}
+              onPress={async () => {
+                if (soundRef.current) {
+                  await soundRef.current.stopAsync()
+                  await soundRef.current.unloadAsync()
+                  soundRef.current = null
+                }
+                setShowPlayerControls(false)
+                setIsPlaying(false)
+                setAudioPosition(0)
+                setAudioDuration(0)
+              }}
+            >
+              <Ionicons name="close" size={24} color={theme.textMuted} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
     </View>
   )
 }
@@ -437,12 +634,81 @@ const styles = StyleSheet.create({
   actionButtonDisabled: {
     opacity: 0.5,
   },
+  bottomPlayer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.lg,
+    borderTopWidth: 1,
+  },
+  progressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  slider: {
+    flex: 1,
+    height: 40,
+  },
+  timeText: {
+    fontSize: 12,
+    fontFamily: 'Georgia',
+    minWidth: 45,
+    textAlign: 'center',
+  },
+  playbackControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.md,
+    paddingTop: spacing.xs,
+  },
+  controlButton: {
+    padding: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  skipLabel: {
+    fontSize: 10,
+    fontFamily: 'Georgia',
+    position: 'absolute',
+    bottom: 0,
+  },
+  playButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  speedButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+    minWidth: 50,
+    alignItems: 'center',
+  },
+  speedText: {
+    fontSize: 14,
+    fontFamily: 'Georgia',
+    fontWeight: '600',
+  },
+  closePlayerButton: {
+    padding: spacing.sm,
+  },
   scroll: {
     flex: 1,
   },
   content: {
     padding: spacing.lg,
     paddingBottom: spacing.xxl,
+  },
+  contentWithPlayer: {
+    paddingBottom: 160,
   },
   siteName: {
     fontSize: 12,
@@ -475,6 +741,13 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontFamily: 'Georgia',
     lineHeight: 28,
+  },
+  currentWord: {
+    backgroundColor: 'rgba(76, 175, 80, 0.4)',  // Light green for current word
+    borderRadius: 2,
+  },
+  readWord: {
+    backgroundColor: 'rgba(76, 175, 80, 0.15)',  // Lighter green for read words
   },
   modalOverlay: {
     flex: 1,

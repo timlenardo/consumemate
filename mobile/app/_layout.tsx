@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Stack } from 'expo-router'
+import { Stack, useRouter, useSegments } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
 import { useColorScheme, View, ActivityIndicator, StyleSheet } from 'react-native'
 import { AuthProvider, useAuth } from '@/lib/AuthContext'
@@ -8,7 +8,23 @@ import { colors } from '@/constants/theme'
 function RootLayoutNav() {
   const colorScheme = useColorScheme()
   const theme = colors[colorScheme ?? 'light']
-  const { isLoading } = useAuth()
+  const { isLoading, isAuthenticated } = useAuth()
+  const router = useRouter()
+  const segments = useSegments()
+
+  useEffect(() => {
+    if (isLoading) return
+
+    const inAuthGroup = segments[0] === '(auth)'
+
+    if (!isAuthenticated && !inAuthGroup) {
+      // Redirect to auth if not authenticated and not already in auth flow
+      router.replace('/(auth)/login')
+    } else if (isAuthenticated && inAuthGroup) {
+      // Redirect to tabs if authenticated and in auth flow
+      router.replace('/(tabs)')
+    }
+  }, [isLoading, isAuthenticated, segments])
 
   if (isLoading) {
     return (
