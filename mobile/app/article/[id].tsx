@@ -22,6 +22,7 @@ import { Audio, AVPlaybackStatus } from 'expo-av'
 import { Ionicons } from '@expo/vector-icons'
 import ViewShot from 'react-native-view-shot'
 import * as Sharing from 'expo-sharing'
+import Markdown from 'react-native-markdown-display'
 import { colors, spacing, borderRadius } from '@/constants/theme'
 import { api, Article, Voice, WordTiming } from '@/lib/api'
 import { useAuth } from '@/lib/AuthContext'
@@ -546,12 +547,96 @@ export default function ArticleScreen() {
     )
   }
 
-  const paragraphs = article.contentMarkdown
-    .split(/\n\n+/)
-    .filter(p => p.trim())
-    .map(p => p.replace(/[#*`_~\[\]]/g, '').trim())
-
   const hasExistingAudio = !!(article.audioUrl || article.audioVoiceId)
+
+  // Markdown styles
+  const markdownStyles = useMemo(() => ({
+    body: {
+      color: theme.text,
+      fontSize: 18,
+      fontFamily: 'Georgia',
+      lineHeight: 28,
+    },
+    paragraph: {
+      marginBottom: spacing.md,
+    },
+    link: {
+      color: theme.primary,
+      textDecorationLine: 'underline' as const,
+    },
+    heading1: {
+      fontSize: 24,
+      fontWeight: '700' as const,
+      color: theme.text,
+      marginTop: spacing.lg,
+      marginBottom: spacing.md,
+      fontFamily: 'Georgia',
+    },
+    heading2: {
+      fontSize: 22,
+      fontWeight: '600' as const,
+      color: theme.text,
+      marginTop: spacing.lg,
+      marginBottom: spacing.sm,
+      fontFamily: 'Georgia',
+    },
+    heading3: {
+      fontSize: 20,
+      fontWeight: '600' as const,
+      color: theme.text,
+      marginTop: spacing.md,
+      marginBottom: spacing.sm,
+      fontFamily: 'Georgia',
+    },
+    blockquote: {
+      backgroundColor: theme.surface,
+      borderLeftColor: theme.primary,
+      borderLeftWidth: 4,
+      paddingLeft: spacing.md,
+      paddingVertical: spacing.sm,
+      marginVertical: spacing.md,
+      fontStyle: 'italic' as const,
+    },
+    code_inline: {
+      backgroundColor: theme.surface,
+      color: theme.textSecondary,
+      fontFamily: 'Courier',
+      fontSize: 16,
+      paddingHorizontal: 4,
+      borderRadius: 4,
+    },
+    code_block: {
+      backgroundColor: theme.surface,
+      padding: spacing.md,
+      borderRadius: borderRadius.md,
+      fontFamily: 'Courier',
+      fontSize: 14,
+    },
+    list_item: {
+      marginBottom: spacing.sm,
+    },
+    bullet_list: {
+      marginBottom: spacing.md,
+    },
+    ordered_list: {
+      marginBottom: spacing.md,
+    },
+    strong: {
+      fontWeight: '700' as const,
+    },
+    em: {
+      fontStyle: 'italic' as const,
+    },
+  }), [theme])
+
+  // Handle link presses
+  const handleLinkPress = useCallback((url: string) => {
+    Linking.openURL(url).catch(err => {
+      console.error('Failed to open URL:', err)
+      Alert.alert('Error', 'Could not open link')
+    })
+    return false // Prevent default handling
+  }, [])
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
@@ -616,26 +701,12 @@ export default function ArticleScreen() {
           {showPlayerControls && wordTimings.length > 0 ? (
             renderHighlightedText()
           ) : (
-            paragraphs.map((paragraph, index) => (
-              <Pressable
-                key={index}
-                onPress={() => showPlayerControls && handleParagraphTap(index)}
-                onLongPress={() => handleTextSelection(paragraph)}
-              >
-                <Text style={[styles.paragraph, { color: theme.text }]} selectable>
-                  {paragraph}
-                </Text>
-                {playFromParagraphIndex === index && (
-                  <TouchableOpacity
-                    style={[styles.playFromHereOverlay, { backgroundColor: theme.primary }]}
-                    onPress={() => handlePlayFromParagraph(index)}
-                  >
-                    <Ionicons name="play" size={16} color="#fff" />
-                    <Text style={styles.playFromHereText}>Play from here</Text>
-                  </TouchableOpacity>
-                )}
-              </Pressable>
-            ))
+            <Markdown
+              style={markdownStyles}
+              onLinkPress={handleLinkPress}
+            >
+              {article.contentMarkdown}
+            </Markdown>
           )}
         </View>
       </ScrollView>

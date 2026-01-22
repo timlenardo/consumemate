@@ -36,6 +36,41 @@ class ElevenLabsTTSProvider implements TTSProvider {
     this.client = new ElevenLabsClient({ apiKey })
   }
 
+  // Clean text for TTS - remove URLs and convert markdown links to plain text
+  private prepareTextForSpeech(text: string): string {
+    let cleaned = text
+
+    // Convert markdown links [text](url) to just "text"
+    cleaned = cleaned.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+
+    // Remove standalone URLs (http, https, www)
+    cleaned = cleaned.replace(/https?:\/\/[^\s]+/g, '')
+    cleaned = cleaned.replace(/www\.[^\s]+/g, '')
+
+    // Remove markdown image syntax ![alt](url)
+    cleaned = cleaned.replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+
+    // Remove markdown formatting that sounds awkward
+    cleaned = cleaned.replace(/#{1,6}\s*/g, '')  // Headers
+    cleaned = cleaned.replace(/\*\*([^*]+)\*\*/g, '$1')  // Bold
+    cleaned = cleaned.replace(/\*([^*]+)\*/g, '$1')  // Italic
+    cleaned = cleaned.replace(/__([^_]+)__/g, '$1')  // Bold underscore
+    cleaned = cleaned.replace(/_([^_]+)_/g, '$1')  // Italic underscore
+    cleaned = cleaned.replace(/`([^`]+)`/g, '$1')  // Inline code
+    cleaned = cleaned.replace(/```[\s\S]*?```/g, '')  // Code blocks
+    cleaned = cleaned.replace(/~~([^~]+)~~/g, '$1')  // Strikethrough
+
+    // Remove HTML tags if any slipped through
+    cleaned = cleaned.replace(/<[^>]+>/g, '')
+
+    // Clean up extra whitespace
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n')  // Multiple newlines to double
+    cleaned = cleaned.replace(/  +/g, ' ')  // Multiple spaces to single
+    cleaned = cleaned.trim()
+
+    return cleaned
+  }
+
   // Split text into chunks at sentence boundaries
   private splitIntoChunks(text: string): string[] {
     const chunks: string[] = []
@@ -103,8 +138,12 @@ class ElevenLabsTTSProvider implements TTSProvider {
   }
 
   async generateSpeech(text: string, voiceId: string): Promise<SpeechResult> {
-    const textChunks = this.splitIntoChunks(text)
-    console.log(`Processing ${textChunks.length} chunks for TTS in parallel (total ${text.length} chars)`)
+    // Clean text for speech - remove URLs, convert markdown links to text
+    const cleanedText = this.prepareTextForSpeech(text)
+    console.log(`Cleaned text: ${text.length} -> ${cleanedText.length} chars`)
+
+    const textChunks = this.splitIntoChunks(cleanedText)
+    console.log(`Processing ${textChunks.length} chunks for TTS in parallel (total ${cleanedText.length} chars)`)
 
     // Process all chunks in parallel for speed (Heroku has 30s timeout)
     const chunkPromises = textChunks.map((chunk, i) => {
@@ -131,7 +170,7 @@ class ElevenLabsTTSProvider implements TTSProvider {
     return {
       audio: combinedAudio,
       wordTimings,
-      processedText: text,  // Return the full text since we process it all now
+      processedText: cleanedText,  // Return the cleaned text that was actually spoken
     }
   }
 
