@@ -55,15 +55,21 @@ class ElevenLabsTTSProvider implements TTSProvider {
   private prepareTextForSpeech(text: string): string {
     let cleaned = text
 
+    // Remove markdown images FIRST (before link processing) - various formats
+    cleaned = cleaned.replace(/!\[[^\]]*\]\([^)]+\)/g, '')  // ![alt](url)
+    cleaned = cleaned.replace(/!\[[^\]]*\]\[[^\]]*\]/g, '')  // ![alt][ref]
+    cleaned = cleaned.replace(/!\[[^\]]*\]/g, '')  // ![alt] (reference style leftover)
+
+    // Remove HTML img tags
+    cleaned = cleaned.replace(/<img[^>]*>/gi, '')
+
     // Convert markdown links [text](url) to just "text"
     cleaned = cleaned.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    cleaned = cleaned.replace(/\[([^\]]+)\]\[[^\]]*\]/g, '$1')  // [text][ref] reference links
 
-    // Remove standalone URLs (http, https, www)
-    cleaned = cleaned.replace(/https?:\/\/[^\s]+/g, '')
-    cleaned = cleaned.replace(/www\.[^\s]+/g, '')
-
-    // Remove markdown image syntax ![alt](url)
-    cleaned = cleaned.replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+    // Remove standalone URLs (http, https, www) - be thorough
+    cleaned = cleaned.replace(/https?:\/\/[^\s\])>"']+/gi, '')
+    cleaned = cleaned.replace(/www\.[^\s\])>"']+/gi, '')
 
     // Remove markdown formatting that sounds awkward
     cleaned = cleaned.replace(/#{1,6}\s*/g, '')  // Headers
@@ -76,7 +82,10 @@ class ElevenLabsTTSProvider implements TTSProvider {
     cleaned = cleaned.replace(/~~([^~]+)~~/g, '$1')  // Strikethrough
 
     // Remove HTML tags if any slipped through
-    cleaned = cleaned.replace(/<[^>]+>/g, '')
+    cleaned = cleaned.replace(/<[^>]+>/gi, '')
+
+    // Remove any remaining URLs that might have been missed
+    cleaned = cleaned.replace(/\bhttps?:\/\/\S+/gi, '')
 
     // Clean up extra whitespace
     cleaned = cleaned.replace(/\n{3,}/g, '\n\n')  // Multiple newlines to double
