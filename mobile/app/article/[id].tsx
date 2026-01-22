@@ -531,25 +531,7 @@ export default function ArticleScreen() {
     )
   }
 
-  if (loading) {
-    return (
-      <View style={[styles.centered, { backgroundColor: theme.background }]}>
-        <ActivityIndicator size="large" color={theme.primary} />
-      </View>
-    )
-  }
-
-  if (!article) {
-    return (
-      <View style={[styles.centered, { backgroundColor: theme.background }]}>
-        <Text style={[styles.errorText, { color: theme.error }]}>Article not found</Text>
-      </View>
-    )
-  }
-
-  const hasExistingAudio = !!(article.audioUrl || article.audioVoiceId)
-
-  // Markdown styles
+  // Markdown styles - must be before early returns to maintain hook order
   const markdownStyles = useMemo(() => ({
     body: {
       color: theme.text,
@@ -637,6 +619,24 @@ export default function ArticleScreen() {
     })
     return false // Prevent default handling
   }, [])
+
+  if (loading) {
+    return (
+      <View style={[styles.centered, { backgroundColor: theme.background }]}>
+        <ActivityIndicator size="large" color={theme.primary} />
+      </View>
+    )
+  }
+
+  if (!article) {
+    return (
+      <View style={[styles.centered, { backgroundColor: theme.background }]}>
+        <Text style={[styles.errorText, { color: theme.error }]}>Article not found</Text>
+      </View>
+    )
+  }
+
+  const hasExistingAudio = !!(article.audioUrl || article.audioVoiceId)
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
