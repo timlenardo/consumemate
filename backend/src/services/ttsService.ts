@@ -152,7 +152,7 @@ class ElevenLabsTTSProvider implements TTSProvider {
 
     // Extract word timings from alignment data
     if (response.alignment) {
-      const { characters, character_start_times_seconds, character_end_times_seconds } = response.alignment
+      const { characters, characterStartTimesSeconds, characterEndTimesSeconds } = response.alignment
 
       // Build words from characters
       let currentWord = ''
@@ -160,15 +160,15 @@ class ElevenLabsTTSProvider implements TTSProvider {
 
       for (let i = 0; i < characters.length; i++) {
         const char = characters[i]
-        const startTime = character_start_times_seconds[i]
-        const endTime = character_end_times_seconds[i]
+        const startTime = characterStartTimesSeconds[i]
+        const endTime = characterEndTimesSeconds[i]
 
         if (char === ' ' || char === '\n') {
           if (currentWord.trim()) {
             wordTimings.push({
               word: currentWord.trim(),
               start: Math.round(wordStart * 1000),
-              end: Math.round(character_end_times_seconds[i - 1] * 1000),
+              end: Math.round(characterEndTimesSeconds[i - 1] * 1000),
             })
           }
           currentWord = ''
@@ -186,7 +186,7 @@ class ElevenLabsTTSProvider implements TTSProvider {
         wordTimings.push({
           word: currentWord.trim(),
           start: Math.round(wordStart * 1000),
-          end: Math.round(character_end_times_seconds[characters.length - 1] * 1000),
+          end: Math.round(characterEndTimesSeconds[characters.length - 1] * 1000),
         })
       }
     }
