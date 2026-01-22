@@ -135,7 +135,69 @@ class ElevenLabsTTSProvider implements TTSProvider {
     return chunks.filter(chunk => chunk.length > 0)
   }
 
-  // Convert a single chunk to audio
+  // Convert text to audio with word timestamps
+  private async convertWithTimestamps(text: string, voiceId: string): Promise<{ audio: Buffer; wordTimings: WordTiming[] }> {
+    const response = await this.client.textToSpeech.convertWithTimestamps(voiceId, {
+      text,
+      modelId: 'eleven_multilingual_v2',
+    })
+
+    const audioChunks: Buffer[] = []
+    const wordTimings: WordTiming[] = []
+
+    // Process the response - it returns audio chunks and alignment data
+    if (response.audioBase64) {
+      audioChunks.push(Buffer.from(response.audioBase64, 'base64'))
+    }
+
+    // Extract word timings from alignment data
+    if (response.alignment) {
+      const { characters, character_start_times_seconds, character_end_times_seconds } = response.alignment
+
+      // Build words from characters
+      let currentWord = ''
+      let wordStart = 0
+
+      for (let i = 0; i < characters.length; i++) {
+        const char = characters[i]
+        const startTime = character_start_times_seconds[i]
+        const endTime = character_end_times_seconds[i]
+
+        if (char === ' ' || char === '\n') {
+          if (currentWord.trim()) {
+            wordTimings.push({
+              word: currentWord.trim(),
+              start: Math.round(wordStart * 1000),
+              end: Math.round(character_end_times_seconds[i - 1] * 1000),
+            })
+          }
+          currentWord = ''
+          wordStart = endTime
+        } else {
+          if (currentWord === '') {
+            wordStart = startTime
+          }
+          currentWord += char
+        }
+      }
+
+      // Don't forget the last word
+      if (currentWord.trim()) {
+        wordTimings.push({
+          word: currentWord.trim(),
+          start: Math.round(wordStart * 1000),
+          end: Math.round(character_end_times_seconds[characters.length - 1] * 1000),
+        })
+      }
+    }
+
+    return {
+      audio: Buffer.concat(audioChunks),
+      wordTimings,
+    }
+  }
+
+  // Fallback: Convert without timestamps (faster but no word sync)
   private async convertChunkToAudio(text: string, voiceId: string): Promise<Buffer> {
     const response = await this.client.textToSpeech.convert(voiceId, {
       text,
@@ -160,6 +222,27 @@ class ElevenLabsTTSProvider implements TTSProvider {
     // Truncate for testing to conserve API quota
     cleanedText = this.truncateForTesting(cleanedText)
 
+    // In test mode with short text, use convertWithTimestamps for word sync
+    // For longer texts, fall back to regular convert (faster, no word sync)
+    const useTimestamps = this.TEST_MODE && cleanedText.split(/\s+/).length <= this.TEST_MODE_WORD_LIMIT + 10
+
+    if (useTimestamps) {
+      console.log('Using convertWithTimestamps for word sync')
+      try {
+        const result = await this.convertWithTimestamps(cleanedText, voiceId)
+        console.log(`Generated audio with ${result.wordTimings.length} word timings`)
+        return {
+          audio: result.audio,
+          wordTimings: result.wordTimings,
+          processedText: cleanedText,
+        }
+      } catch (error) {
+        console.error('convertWithTimestamps failed, falling back to regular convert:', error)
+        // Fall through to regular convert
+      }
+    }
+
+    // Regular convert without timestamps
     const textChunks = this.splitIntoChunks(cleanedText)
     console.log(`Processing ${textChunks.length} chunks for TTS in parallel (total ${cleanedText.length} chars)`)
 
@@ -182,13 +265,10 @@ class ElevenLabsTTSProvider implements TTSProvider {
     const combinedAudio = Buffer.concat(audioBuffers)
     console.log(`Combined audio size: ${combinedAudio.length} bytes`)
 
-    // No word timings with regular convert (would need convertWithTimestamps)
-    const wordTimings: WordTiming[] = []
-
     return {
       audio: combinedAudio,
-      wordTimings,
-      processedText: cleanedText,  // Return the cleaned text that was actually spoken
+      wordTimings: [],
+      processedText: cleanedText,
     }
   }
 

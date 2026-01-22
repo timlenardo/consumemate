@@ -76,10 +76,18 @@ export default function ArticleScreen() {
   const [previewingVoiceId, setPreviewingVoiceId] = useState<string | null>(null)
   const [playFromParagraphIndex, setPlayFromParagraphIndex] = useState<number | null>(null)
 
+  // Auto-scroll states
+  const [userHasScrolled, setUserHasScrolled] = useState(false)
+  const [showReturnButton, setShowReturnButton] = useState(false)
+  const [currentWordY, setCurrentWordY] = useState(0)
+
   const soundRef = useRef<Audio.Sound | null>(null)
   const previewSoundRef = useRef<Audio.Sound | null>(null)
   const viewShotRef = useRef<ViewShot>(null)
   const scrollViewRef = useRef<ScrollView>(null)
+  const wordPositionsRef = useRef<Map<number, number>>(new Map())
+  const isAutoScrollingRef = useRef(false)
+  const lastScrollYRef = useRef(0)
 
   // Animation values for half-modal
   const overlayOpacity = useRef(new Animated.Value(0)).current
@@ -538,12 +546,76 @@ export default function ArticleScreen() {
     return -1
   }, [wordTimings, audioPosition])
 
-  // Render text with word highlighting
+  // Auto-scroll to current word when playing (unless user has manually scrolled)
+  useEffect(() => {
+    if (currentWordIndex >= 0 && isPlaying && !userHasScrolled && scrollViewRef.current) {
+      const wordY = wordPositionsRef.current.get(currentWordIndex)
+      if (wordY !== undefined) {
+        isAutoScrollingRef.current = true
+        // Scroll to keep current word in upper third of screen
+        const targetY = Math.max(0, wordY - SCREEN_HEIGHT / 3)
+        scrollViewRef.current.scrollTo({ y: targetY, animated: true })
+        setCurrentWordY(wordY)
+        // Reset auto-scroll flag after animation
+        setTimeout(() => {
+          isAutoScrollingRef.current = false
+        }, 300)
+      }
+    }
+  }, [currentWordIndex, isPlaying, userHasScrolled])
+
+  // Handle scroll events to detect manual scrolling
+  const handleScroll = useCallback((event: any) => {
+    const scrollY = event.nativeEvent.contentOffset.y
+    lastScrollYRef.current = scrollY
+
+    // If we're auto-scrolling, ignore this event
+    if (isAutoScrollingRef.current) return
+
+    // If playing and user scrolls significantly, mark as manual scroll
+    if (isPlaying && wordTimings.length > 0) {
+      const wordY = wordPositionsRef.current.get(currentWordIndex) || 0
+      const expectedY = Math.max(0, wordY - SCREEN_HEIGHT / 3)
+      const scrollDiff = Math.abs(scrollY - expectedY)
+
+      if (scrollDiff > 100) {
+        setUserHasScrolled(true)
+        setShowReturnButton(true)
+      }
+    }
+  }, [isPlaying, currentWordIndex, wordTimings.length])
+
+  // Return to current playing position
+  const handleReturnToPosition = useCallback(() => {
+    if (scrollViewRef.current && currentWordIndex >= 0) {
+      const wordY = wordPositionsRef.current.get(currentWordIndex)
+      if (wordY !== undefined) {
+        isAutoScrollingRef.current = true
+        const targetY = Math.max(0, wordY - SCREEN_HEIGHT / 3)
+        scrollViewRef.current.scrollTo({ y: targetY, animated: true })
+        setTimeout(() => {
+          isAutoScrollingRef.current = false
+        }, 300)
+      }
+    }
+    setUserHasScrolled(false)
+    setShowReturnButton(false)
+  }, [currentWordIndex])
+
+  // Reset scroll state when playback stops
+  useEffect(() => {
+    if (!isPlaying) {
+      setUserHasScrolled(false)
+      setShowReturnButton(false)
+    }
+  }, [isPlaying])
+
+  // Render text with word highlighting and position tracking
   const renderHighlightedText = () => {
     if (!wordTimings.length) return null
 
     return (
-      <Text style={[styles.paragraph, { color: theme.text }]} selectable>
+      <View style={styles.highlightedTextContainer}>
         {wordTimings.map((timing, index) => {
           const isCurrentWord = index === currentWordIndex
           const isReadWord = index < currentWordIndex
@@ -551,17 +623,23 @@ export default function ArticleScreen() {
           return (
             <Text
               key={index}
+              onLayout={(event) => {
+                // Store the Y position of each word for auto-scroll
+                const { y } = event.nativeEvent.layout
+                wordPositionsRef.current.set(index, y)
+              }}
               style={[
+                styles.highlightedWord,
+                { color: theme.text },
                 isCurrentWord && styles.currentWord,
                 isReadWord && styles.readWord,
               ]}
             >
-              {timing.word}
-              {index < wordTimings.length - 1 ? ' ' : ''}
+              {timing.word}{' '}
             </Text>
           )
         })}
-      </Text>
+      </View>
     )
   }
 
@@ -715,6 +793,8 @@ export default function ArticleScreen() {
         ref={scrollViewRef}
         style={styles.scroll}
         contentContainerStyle={[styles.content, showPlayerControls && styles.contentWithPlayer]}
+        onScroll={handleScroll}
+        scrollEventThrottle={100}
       >
         <Text style={[styles.siteName, { color: theme.textMuted }]}>
           {article.siteName || new URL(article.url).hostname}
@@ -745,6 +825,17 @@ export default function ArticleScreen() {
           )}
         </View>
       </ScrollView>
+
+      {/* Return to current position button */}
+      {showReturnButton && isPlaying && (
+        <TouchableOpacity
+          style={[styles.returnButton, { backgroundColor: theme.primary }]}
+          onPress={handleReturnToPosition}
+        >
+          <Ionicons name="locate" size={18} color="#fff" />
+          <Text style={styles.returnButtonText}>Return to current position</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Audio Control Modal (Half-page) */}
       <Modal visible={showAudioControlModal} transparent animationType="none">
@@ -1111,12 +1202,43 @@ const styles = StyleSheet.create({
     fontFamily: 'Georgia',
     lineHeight: 28,
   },
+  highlightedTextContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  highlightedWord: {
+    fontSize: 18,
+    fontFamily: 'Georgia',
+    lineHeight: 28,
+  },
   currentWord: {
     backgroundColor: 'rgba(76, 175, 80, 0.4)',
     borderRadius: 2,
   },
   readWord: {
     backgroundColor: 'rgba(76, 175, 80, 0.15)',
+  },
+  returnButton: {
+    position: 'absolute',
+    bottom: 180,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.xl,
+    gap: spacing.sm,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  returnButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontFamily: 'Georgia',
+    fontWeight: '600',
   },
   playFromHereOverlay: {
     flexDirection: 'row',
