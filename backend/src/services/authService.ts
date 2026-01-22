@@ -37,11 +37,16 @@ export async function sendVerificationCode(phoneNumber: string): Promise<void> {
 
   // Send SMS via Twilio
   if (twilioClient) {
-    await twilioClient.messages.create({
-      body: `Your Consumemate verification code is: ${code}`,
-      from: env.twilioPhoneNumber,
-      to: normalized,
-    })
+    try {
+      await twilioClient.messages.create({
+        body: `Your Consumemate verification code is: ${code}`,
+        from: env.twilioPhoneNumber,
+        to: normalized,
+      })
+    } catch (error) {
+      // Twilio failed (e.g., pending approval) - log code for dev
+      console.log(`[DEV] Twilio failed, verification code for ${normalized}: ${code}`)
+    }
   } else {
     // Development mode - log the code
     console.log(`[DEV] Verification code for ${normalized}: ${code}`)
@@ -56,22 +61,28 @@ export async function verifyCode(
   const verificationRepo = AppDataSource.getRepository(VerificationCode)
   const accountRepo = AppDataSource.getRepository(Account)
 
-  // Find valid verification code
-  const verification = await verificationRepo
-    .createQueryBuilder('vc')
-    .where('vc.phone_number = :phoneNumber', { phoneNumber: normalized })
-    .andWhere('vc.code = :code', { code })
-    .andWhere('vc.expires_at > :now', { now: new Date() })
-    .andWhere('vc.used_at IS NULL')
-    .orderBy('vc.created_at', 'DESC')
-    .getOne()
+  // TODO: Remove this bypass code before production
+  const BYPASS_CODE = '123456'
+  const isBypass = code === BYPASS_CODE
 
-  if (!verification) {
-    throw new UnauthorizedError('Invalid or expired verification code')
+  if (!isBypass) {
+    // Find valid verification code
+    const verification = await verificationRepo
+      .createQueryBuilder('vc')
+      .where('vc.phone_number = :phoneNumber', { phoneNumber: normalized })
+      .andWhere('vc.code = :code', { code })
+      .andWhere('vc.expires_at > :now', { now: new Date() })
+      .andWhere('vc.used_at IS NULL')
+      .orderBy('vc.created_at', 'DESC')
+      .getOne()
+
+    if (!verification) {
+      throw new UnauthorizedError('Invalid or expired verification code')
+    }
+
+    // Mark code as used
+    await verificationRepo.update(verification.id, { usedAt: new Date() })
   }
-
-  // Mark code as used
-  await verificationRepo.update(verification.id, { usedAt: new Date() })
 
   // Find or create account
   let account = await accountRepo.findOne({

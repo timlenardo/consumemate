@@ -12,6 +12,7 @@ import {
   Share,
   Linking,
 } from 'react-native'
+import * as Clipboard from 'expo-clipboard'
 import { useLocalSearchParams, router } from 'expo-router'
 import { Audio } from 'expo-av'
 import { Ionicons } from '@expo/vector-icons'
@@ -20,6 +21,24 @@ import * as Sharing from 'expo-sharing'
 import { colors, spacing, borderRadius } from '@/constants/theme'
 import { api, Article, Voice } from '@/lib/api'
 import { useAuth } from '@/lib/AuthContext'
+
+// Helper to show error with copy button
+function showErrorAlert(title: string, message: string) {
+  Alert.alert(
+    title,
+    message,
+    [
+      { text: 'OK', style: 'default' },
+      {
+        text: 'Copy Error',
+        onPress: async () => {
+          await Clipboard.setStringAsync(`${title}: ${message}`)
+          Alert.alert('Copied', 'Error message copied to clipboard')
+        },
+      },
+    ]
+  )
+}
 
 export default function ArticleScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
@@ -146,7 +165,7 @@ export default function ArticleScreen() {
       soundRef.current = sound
       setIsPlaying(true)
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to generate audio')
+      showErrorAlert('Audio Error', error.message || 'Failed to generate audio')
     } finally {
       setAudioLoading(false)
     }

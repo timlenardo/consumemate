@@ -5,7 +5,8 @@
   "description": "Save articles to read or listen later",
   "permissions": [
     "activeTab",
-    "storage"
+    "storage",
+    "scripting"
   ],
   "action": {
     "default_popup": "popup.html",

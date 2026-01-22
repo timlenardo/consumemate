@@ -1,4 +1,4 @@
-import { ElevenLabsClient } from 'elevenlabs'
+import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js'
 import { env } from '@config/env'
 
 // TTS Provider interface for easy swapping
@@ -23,16 +23,32 @@ class ElevenLabsTTSProvider implements TTSProvider {
   }
 
   async generateSpeech(text: string, voiceId: string): Promise<Buffer> {
-    const audio = await this.client.generate({
-      voice: voiceId,
-      text,
-      model_id: 'eleven_multilingual_v2',
+    // ElevenLabs has a ~5000 character limit per request
+    // Truncate long text for now (TODO: implement chunking for full articles)
+    const MAX_CHARS = 4500
+    let processedText = text
+    if (text.length > MAX_CHARS) {
+      // Truncate at sentence boundary
+      processedText = text.substring(0, MAX_CHARS)
+      const lastPeriod = processedText.lastIndexOf('.')
+      if (lastPeriod > MAX_CHARS * 0.8) {
+        processedText = processedText.substring(0, lastPeriod + 1)
+      }
+      processedText += ' ... Article truncated for audio preview.'
+    }
+
+    const response = await this.client.textToSpeech.convert(voiceId, {
+      text: processedText,
+      modelId: 'eleven_multilingual_v2',
     })
 
     // Convert stream to buffer
     const chunks: Buffer[] = []
-    for await (const chunk of audio) {
-      chunks.push(Buffer.from(chunk))
+    const reader = response.getReader()
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(Buffer.from(value))
     }
 
     return Buffer.concat(chunks)
@@ -53,12 +69,12 @@ class ElevenLabsTTSProvider implements TTSProvider {
       'cgSgspJ2msm6clMCkdW9', // Jessica
     ]
 
-    return response.voices
-      .filter(v => popularVoiceIds.includes(v.voice_id))
-      .map(v => ({
-        id: v.voice_id,
+    return (response.voices || [])
+      .filter((v: any) => popularVoiceIds.includes(v.voiceId))
+      .map((v: any) => ({
+        id: v.voiceId,
         name: v.name || 'Unknown',
-        previewUrl: v.preview_url,
+        previewUrl: v.previewUrl,
         category: v.category,
       }))
   }
