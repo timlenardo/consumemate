@@ -13,6 +13,7 @@ import {
   Linking,
   Pressable,
   Dimensions,
+  Animated,
 } from 'react-native'
 import Slider from '@react-native-community/slider'
 import * as Clipboard from 'expo-clipboard'
@@ -79,6 +80,10 @@ export default function ArticleScreen() {
   const viewShotRef = useRef<ViewShot>(null)
   const scrollViewRef = useRef<ScrollView>(null)
 
+  // Animation values for half-modal
+  const overlayOpacity = useRef(new Animated.Value(0)).current
+  const modalSlideY = useRef(new Animated.Value(300)).current
+
   useEffect(() => {
     loadArticle()
     loadVoices()
@@ -100,6 +105,37 @@ export default function ArticleScreen() {
       setSelectedVoice(preferredVoice || voices[0])
     }
   }, [voices, account?.preferredVoiceId])
+
+  // Animate half-modal open/close
+  useEffect(() => {
+    if (showAudioControlModal) {
+      Animated.parallel([
+        Animated.timing(overlayOpacity, {
+          toValue: 1,
+          duration: 250,
+          useNativeDriver: true,
+        }),
+        Animated.timing(modalSlideY, {
+          toValue: 0,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+      ]).start()
+    } else {
+      Animated.parallel([
+        Animated.timing(overlayOpacity, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(modalSlideY, {
+          toValue: 300,
+          duration: 250,
+          useNativeDriver: true,
+        }),
+      ]).start()
+    }
+  }, [showAudioControlModal])
 
   const loadArticle = async () => {
     try {
@@ -605,9 +641,19 @@ export default function ArticleScreen() {
       </ScrollView>
 
       {/* Audio Control Modal (Half-page) */}
-      <Modal visible={showAudioControlModal} transparent animationType="slide">
-        <Pressable style={styles.modalOverlay} onPress={() => setShowAudioControlModal(false)}>
-          <Pressable style={[styles.halfModalContent, { backgroundColor: theme.surface }]} onPress={e => e.stopPropagation()}>
+      <Modal visible={showAudioControlModal} transparent animationType="none">
+        <View style={styles.modalContainer}>
+          <Animated.View
+            style={[styles.modalOverlayAnimated, { opacity: overlayOpacity }]}
+          >
+            <Pressable style={styles.modalOverlayPressable} onPress={() => setShowAudioControlModal(false)} />
+          </Animated.View>
+          <Animated.View
+            style={[
+              styles.halfModalContent,
+              { backgroundColor: theme.surface, transform: [{ translateY: modalSlideY }] }
+            ]}
+          >
             <View style={styles.modalHandle} />
             <Text style={[styles.modalTitle, { color: theme.text }]}>
               Listen to Article
@@ -649,8 +695,8 @@ export default function ArticleScreen() {
             <Text style={[styles.transcribeNote, { color: theme.textMuted }]}>
               This will convert the article to audio using AI voice synthesis
             </Text>
-          </Pressable>
-        </Pressable>
+          </Animated.View>
+        </View>
       </Modal>
 
       {/* Voice Selection Modal (Full-page) */}
@@ -981,6 +1027,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'Georgia',
     fontWeight: '500',
+  },
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalOverlayAnimated: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  modalOverlayPressable: {
+    flex: 1,
   },
   modalOverlay: {
     flex: 1,
