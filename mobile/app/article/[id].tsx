@@ -732,6 +732,26 @@ export default function ArticleScreen() {
     return false // Prevent default handling
   }, [])
 
+  // Handle share quote from clipboard
+  const handleShareQuote = useCallback(async () => {
+    try {
+      const clipboardContent = await Clipboard.getStringAsync()
+      if (clipboardContent && clipboardContent.trim().length > 0) {
+        setSelectedText(clipboardContent.trim())
+        setShowShareModal(true)
+      } else {
+        Alert.alert(
+          'Select Text First',
+          'To share a quote:\n\n1. Long-press on text in the article\n2. Select the text you want to share\n3. Tap "Copy"\n4. Then tap this Share Quote button again',
+          [{ text: 'OK' }]
+        )
+      }
+    } catch (error) {
+      console.error('Failed to read clipboard:', error)
+      Alert.alert('Error', 'Could not read clipboard')
+    }
+  }, [])
+
   if (loading) {
     return (
       <View style={[styles.centered, { backgroundColor: theme.background }]}>
@@ -819,6 +839,14 @@ export default function ArticleScreen() {
             <Markdown
               style={markdownStyles}
               onLinkPress={handleLinkPress}
+              rules={{
+                // Make text selectable
+                text: (node, children, parent, styles) => (
+                  <Text key={node.key} style={styles.text} selectable>
+                    {node.content}
+                  </Text>
+                ),
+              }}
             >
               {article.contentMarkdown}
             </Markdown>
@@ -834,6 +862,16 @@ export default function ArticleScreen() {
         >
           <Ionicons name="locate" size={18} color="#fff" />
           <Text style={styles.returnButtonText}>Return to current position</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Share Quote FAB */}
+      {!showPlayerControls && !showAudioControlModal && !showVoiceSelectionModal && (
+        <TouchableOpacity
+          style={[styles.shareQuoteFab, { backgroundColor: theme.primary }]}
+          onPress={handleShareQuote}
+        >
+          <Ionicons name="chatbubble-outline" size={24} color="#fff" />
         </TouchableOpacity>
       )}
 
@@ -1239,6 +1277,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'Georgia',
     fontWeight: '600',
+  },
+  shareQuoteFab: {
+    position: 'absolute',
+    bottom: 30,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
   },
   playFromHereOverlay: {
     flexDirection: 'row',
