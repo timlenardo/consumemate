@@ -14,6 +14,8 @@ export const env = {
 
   // ElevenLabs
   elevenLabsApiKey: process.env.ELEVENLABS_API_KEY!,
+  // TTS test mode - truncates to 100 words to conserve API quota (default: true for local dev)
+  ttsTestMode: process.env.TTS_TEST_MODE !== 'false',
 
   // URLs
   appUrl: process.env.APP_URL || 'http://localhost:3000',

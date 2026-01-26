@@ -31,8 +31,8 @@ export interface Voice {
 class ElevenLabsTTSProvider implements TTSProvider {
   private client: ElevenLabsClient
   private readonly MAX_CHUNK_CHARS = 4500
-  // TODO: Set to false for production - limits to ~100 words to conserve API quota
-  private readonly TEST_MODE = true
+  // When true, limits to ~100 words to conserve API quota (for local development)
+  private readonly TEST_MODE = env.ttsTestMode
   private readonly TEST_MODE_WORD_LIMIT = 100
 
   constructor(apiKey: string) {
