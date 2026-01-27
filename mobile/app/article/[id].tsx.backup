@@ -16,6 +16,7 @@ import {
   Animated,
 } from 'react-native'
 import Slider from '@react-native-community/slider'
+import * as Clipboard from 'expo-clipboard'
 import { useLocalSearchParams, router } from 'expo-router'
 import { Audio, AVPlaybackStatus } from 'expo-av'
 import { Ionicons } from '@expo/vector-icons'
@@ -30,9 +31,22 @@ const PLAYBACK_SPEEDS = [1.0, 1.2, 1.5, 1.7, 2.0]
 const SKIP_SECONDS = 15
 const { height: SCREEN_HEIGHT } = Dimensions.get('window')
 
-// Helper to show error alert
+// Helper to show error with copy button
 function showErrorAlert(title: string, message: string) {
-  Alert.alert(title, message)
+  Alert.alert(
+    title,
+    message,
+    [
+      { text: 'OK', style: 'default' },
+      {
+        text: 'Copy Error',
+        onPress: async () => {
+          await Clipboard.setStringAsync(`${title}: ${message}`)
+          Alert.alert('Copied', 'Error message copied to clipboard')
+        },
+      },
+    ]
+  )
 }
 
 export default function ArticleScreen() {
@@ -134,10 +148,18 @@ export default function ArticleScreen() {
 
   const loadArticle = async () => {
     try {
-      const data = await api.getArticle(parseInt(id, 10))
+      if (!id) {
+        throw new Error('No article ID provided')
+      }
+      const articleId = parseInt(id, 10)
+      if (isNaN(articleId)) {
+        throw new Error('Invalid article ID')
+      }
+      const data = await api.getArticle(articleId)
       setArticle(data)
-    } catch (error) {
-      Alert.alert('Error', 'Failed to load article')
+    } catch (error: any) {
+      console.error('Failed to load article:', error)
+      Alert.alert('Error', error.message || 'Failed to load article')
       router.back()
     } finally {
       setLoading(false)
@@ -783,7 +805,13 @@ export default function ArticleScreen() {
         scrollEventThrottle={100}
       >
         <Text style={[styles.siteName, { color: theme.textMuted }]}>
-          {article.siteName || new URL(article.url).hostname}
+          {article.siteName || (() => {
+            try {
+              return new URL(article.url).hostname
+            } catch {
+              return 'Article'
+            }
+          })()}
         </Text>
 
         <Text style={[styles.title, { color: theme.text }]}>{article.title}</Text>
@@ -801,13 +829,14 @@ export default function ArticleScreen() {
         <View style={styles.articleBody}>
           {showPlayerControls && wordTimings.length > 0 ? (
             renderHighlightedText()
-          ) : (
-            <Markdown
-              style={markdownStyles}
-              onLinkPress={handleLinkPress}
-            >
+          ) : article.contentMarkdown ? (
+            <Text style={[styles.paragraph, { color: theme.text }]}>
               {article.contentMarkdown}
-            </Markdown>
+            </Text>
+          ) : (
+            <Text style={[styles.paragraph, { color: theme.text }]}>
+              No content available
+            </Text>
           )}
         </View>
       </ScrollView>

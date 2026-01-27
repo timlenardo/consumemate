@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "consumemate",
+    "slug": "consumemate",
+    "version": "1.0.0",
+    "sdkVersion": "51.0.0",
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "ios": {
+      "bundleIdentifier": "xyz.timl.consummate"
+    }
+  }
+}

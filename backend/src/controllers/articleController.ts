@@ -199,6 +199,30 @@ export const generateAudioChunk = endpointAuth(
 
     const article = await articleService.getArticle(req.auth.accountId, articleId)
 
+    // Check for cached chunk first
+    const cachedChunk = articleService.getCachedChunk(article, voiceId, chunkIndex)
+    if (cachedChunk) {
+      console.log(`[generateAudioChunk] Returning cached chunk ${chunkIndex} for article ${articleId}`)
+      // Get total chunks to return in response
+      const plainText = article.contentMarkdown
+        .replace(/!\[.*?\]\(.*?\)/g, '')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .replace(/[#*`_~]/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+      const totalChunks = ttsService.getChunkCount(plainText)
+
+      return {
+        audioData: cachedChunk.audioData,
+        contentType: 'audio/mpeg',
+        wordTimings: cachedChunk.wordTimings,
+        chunkText: '', // Not stored in cache
+        chunkIndex,
+        totalChunks,
+        cached: true,
+      }
+    }
+
     // Get plain text from markdown
     const plainText = article.contentMarkdown
       .replace(/!\[.*?\]\(.*?\)/g, '') // Remove images
@@ -208,14 +232,26 @@ export const generateAudioChunk = endpointAuth(
       .trim()
 
     const result = await ttsService.generateChunk(plainText, voiceId, chunkIndex)
+    const audioBase64 = result.audio.toString('base64')
+
+    // Save the chunk to cache
+    await articleService.saveAudioChunk(
+      articleId,
+      voiceId,
+      chunkIndex,
+      result.totalChunks,
+      audioBase64,
+      result.wordTimings
+    )
 
     return {
-      audioData: result.audio.toString('base64'),
+      audioData: audioBase64,
       contentType: 'audio/mpeg',
       wordTimings: result.wordTimings,
       chunkText: result.chunkText,
       chunkIndex: result.chunkIndex,
       totalChunks: result.totalChunks,
+      cached: false,
     }
   },
   z.object({
@@ -233,6 +269,7 @@ export const generateAudioChunk = endpointAuth(
 export const getAudioChunkCount = endpointAuth(
   async (req) => {
     const articleId = parseInt(req.params.id, 10)
+    const voiceId = req.query.voiceId as string | undefined
     const article = await articleService.getArticle(req.auth.accountId, articleId)
 
     const plainText = article.contentMarkdown
@@ -244,14 +281,24 @@ export const getAudioChunkCount = endpointAuth(
 
     const totalChunks = ttsService.getChunkCount(plainText)
 
+    // If voiceId is provided, return info about which chunks are already generated
+    const generatedChunks = voiceId
+      ? articleService.getGeneratedChunkIndices(article, voiceId)
+      : []
+
     return {
       totalChunks,
       articleId,
+      voiceId: voiceId || null,
+      generatedChunks,
     }
   },
   z.object({
     params: z.object({
       id: z.string(),
+    }),
+    query: z.object({
+      voiceId: z.string().optional(),
     }),
   })
 )

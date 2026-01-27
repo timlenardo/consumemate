@@ -257,7 +257,95 @@ export async function clearArticleAudio(
     audioVoiceId: null,
     audioWordTimings: null,
     audioProcessedText: null,
+    audioChunksData: null,
   })
 
   return articleRepo.findOneOrFail({ where: { id: articleId } })
+}
+
+// Audio chunk storage types
+interface AudioChunkData {
+  audioData: string  // base64
+  wordTimings: { word: string; start: number; end: number }[]
+}
+
+interface AudioChunksStorage {
+  voiceId: string
+  totalChunks: number
+  chunks: { [index: string]: AudioChunkData }
+}
+
+// Get cached audio chunks for an article
+export function getAudioChunks(article: Article, voiceId: string): AudioChunksStorage | null {
+  if (!article.audioChunksData) return null
+
+  try {
+    const data = JSON.parse(article.audioChunksData) as AudioChunksStorage
+    // Only return if it matches the requested voice
+    if (data.voiceId === voiceId) {
+      return data
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+// Get indices of generated chunks for a voice
+export function getGeneratedChunkIndices(article: Article, voiceId: string): number[] {
+  const chunks = getAudioChunks(article, voiceId)
+  if (!chunks) return []
+  return Object.keys(chunks.chunks).map(k => parseInt(k, 10)).sort((a, b) => a - b)
+}
+
+// Save an audio chunk
+export async function saveAudioChunk(
+  articleId: number,
+  voiceId: string,
+  chunkIndex: number,
+  totalChunks: number,
+  audioData: string,
+  wordTimings: { word: string; start: number; end: number }[]
+): Promise<void> {
+  const articleRepo = AppDataSource.getRepository(Article)
+  const article = await articleRepo.findOneOrFail({ where: { id: articleId } })
+
+  // Get existing chunks or create new storage
+  let storage: AudioChunksStorage
+  if (article.audioChunksData) {
+    try {
+      storage = JSON.parse(article.audioChunksData)
+      // If voice changed, start fresh
+      if (storage.voiceId !== voiceId) {
+        storage = { voiceId, totalChunks, chunks: {} }
+      }
+    } catch {
+      storage = { voiceId, totalChunks, chunks: {} }
+    }
+  } else {
+    storage = { voiceId, totalChunks, chunks: {} }
+  }
+
+  // Add the chunk
+  storage.chunks[chunkIndex.toString()] = { audioData, wordTimings }
+  storage.totalChunks = totalChunks
+
+  // Save to database
+  await articleRepo.update(articleId, {
+    audioChunksData: JSON.stringify(storage),
+    audioVoiceId: voiceId,
+  })
+
+  console.log(`[articleService] Saved chunk ${chunkIndex + 1}/${totalChunks} for article ${articleId}`)
+}
+
+// Get a specific cached chunk
+export function getCachedChunk(
+  article: Article,
+  voiceId: string,
+  chunkIndex: number
+): AudioChunkData | null {
+  const storage = getAudioChunks(article, voiceId)
+  if (!storage) return null
+  return storage.chunks[chunkIndex.toString()] || null
 }

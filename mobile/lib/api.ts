@@ -1,11 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 
-// Set to true to use staging server (for phone testing), false for local dev
-const USE_STAGING = true
+// API URLs
+const STAGING_URL = 'https://consume-dev-56af3b34f0b8.herokuapp.com'
+const PRODUCTION_URL = 'https://consume-dev-56af3b34f0b8.herokuapp.com' // Using staging as production for now
 
-const API_URL = __DEV__
-  ? (USE_STAGING ? 'https://consume-dev-56af3b34f0b8.herokuapp.com' : 'http://localhost:3000')
-  : 'https://consume-prod-XXXXX.herokuapp.com' // TODO: Update with production URL
+// In dev mode, use staging server (works on physical devices)
+// In production builds, use production URL
+const API_URL = __DEV__ ? STAGING_URL : PRODUCTION_URL
 
 export interface Account {
   id: number
