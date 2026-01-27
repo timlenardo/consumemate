@@ -40,7 +40,7 @@ export interface Voice {
 // ElevenLabs implementation
 class ElevenLabsTTSProvider implements TTSProvider {
   private client: ElevenLabsClient
-  private readonly MAX_CHUNK_CHARS = 4500
+  private readonly MAX_CHUNK_CHARS = 1000  // Smaller chunks to avoid Heroku 30s timeout
   // When true, limits to ~100 words to conserve API quota (for local development)
   private readonly TEST_MODE = env.ttsTestMode
   private readonly TEST_MODE_WORD_LIMIT = 100
