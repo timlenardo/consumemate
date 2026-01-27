@@ -14,10 +14,20 @@ export interface SpeechResult {
   processedText: string  // The actual text that was converted to speech
 }
 
+export interface ChunkedSpeechResult {
+  audio: Buffer
+  wordTimings: WordTiming[]
+  chunkText: string
+  chunkIndex: number
+  totalChunks: number
+}
+
 // TTS Provider interface for easy swapping
 export interface TTSProvider {
   generateSpeech(text: string, voiceId: string): Promise<SpeechResult>
   getVoices(): Promise<Voice[]>
+  getChunkCount(text: string): number
+  generateChunk(text: string, voiceId: string, chunkIndex: number): Promise<ChunkedSpeechResult>
 }
 
 export interface Voice {
@@ -305,6 +315,53 @@ class ElevenLabsTTSProvider implements TTSProvider {
         category: v.category,
       }))
   }
+
+  // Get total number of chunks for an article
+  getChunkCount(text: string): number {
+    const cleanedText = this.prepareTextForSpeech(text)
+    const chunks = this.splitIntoChunks(cleanedText)
+    return chunks.length
+  }
+
+  // Generate audio for a single chunk
+  async generateChunk(text: string, voiceId: string, chunkIndex: number): Promise<ChunkedSpeechResult> {
+    const cleanedText = this.prepareTextForSpeech(text)
+    const chunks = this.splitIntoChunks(cleanedText)
+    const totalChunks = chunks.length
+
+    if (chunkIndex < 0 || chunkIndex >= totalChunks) {
+      throw new Error(`Invalid chunk index ${chunkIndex}. Total chunks: ${totalChunks}`)
+    }
+
+    const chunkText = chunks[chunkIndex]
+    console.log(`Generating chunk ${chunkIndex + 1}/${totalChunks} (${chunkText.length} chars)`)
+
+    // Use convertWithTimestamps for word sync
+    try {
+      const result = await this.convertWithTimestamps(chunkText, voiceId)
+      console.log(`Chunk ${chunkIndex + 1} generated with ${result.wordTimings.length} word timings`)
+
+      return {
+        audio: result.audio,
+        wordTimings: result.wordTimings,
+        chunkText,
+        chunkIndex,
+        totalChunks,
+      }
+    } catch (error) {
+      console.error(`convertWithTimestamps failed for chunk ${chunkIndex}, using fallback:`, error)
+
+      // Fallback to regular convert without timestamps
+      const audio = await this.convertChunkToAudio(chunkText, voiceId)
+      return {
+        audio,
+        wordTimings: [],
+        chunkText,
+        chunkIndex,
+        totalChunks,
+      }
+    }
+  }
 }
 
 // Factory function - easily swap providers here
@@ -327,4 +384,12 @@ export async function generateSpeech(text: string, voiceId: string): Promise<Spe
 
 export async function getAvailableVoices(): Promise<Voice[]> {
   return getTTSProvider().getVoices()
+}
+
+export function getChunkCount(text: string): number {
+  return getTTSProvider().getChunkCount(text)
+}
+
+export async function generateChunk(text: string, voiceId: string, chunkIndex: number): Promise<ChunkedSpeechResult> {
+  return getTTSProvider().generateChunk(text, voiceId, chunkIndex)
 }

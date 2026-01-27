@@ -13,5 +13,7 @@ router.post('/:id/unread', ...endpointToArrayAuth(articleController.markAsUnread
 router.delete('/:id', ...endpointToArrayAuth(articleController.deleteArticle))
 router.post('/:id/audio', ...endpointToArrayAuth(articleController.generateAudio))
 router.delete('/:id/audio', ...endpointToArrayAuth(articleController.clearAudio))
+router.get('/:id/audio/chunks', ...endpointToArrayAuth(articleController.getAudioChunkCount))
+router.post('/:id/audio/chunk', ...endpointToArrayAuth(articleController.generateAudioChunk))
 
 export default router

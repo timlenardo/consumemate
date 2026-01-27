@@ -191,6 +191,71 @@ export const generateAudio = endpointAuth(
   })
 )
 
+// Chunked audio generation - generates one chunk at a time for faster playback start
+export const generateAudioChunk = endpointAuth(
+  async (req) => {
+    const articleId = parseInt(req.params.id, 10)
+    const { voiceId, chunkIndex } = req.body
+
+    const article = await articleService.getArticle(req.auth.accountId, articleId)
+
+    // Get plain text from markdown
+    const plainText = article.contentMarkdown
+      .replace(/!\[.*?\]\(.*?\)/g, '') // Remove images
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // Convert links to text
+      .replace(/[#*`_~]/g, '') // Remove markdown formatting
+      .replace(/\n{3,}/g, '\n\n') // Normalize line breaks
+      .trim()
+
+    const result = await ttsService.generateChunk(plainText, voiceId, chunkIndex)
+
+    return {
+      audioData: result.audio.toString('base64'),
+      contentType: 'audio/mpeg',
+      wordTimings: result.wordTimings,
+      chunkText: result.chunkText,
+      chunkIndex: result.chunkIndex,
+      totalChunks: result.totalChunks,
+    }
+  },
+  z.object({
+    params: z.object({
+      id: z.string(),
+    }),
+    body: z.object({
+      voiceId: z.string(),
+      chunkIndex: z.number().int().min(0),
+    }),
+  })
+)
+
+// Get chunk count for an article (so client knows how many chunks to request)
+export const getAudioChunkCount = endpointAuth(
+  async (req) => {
+    const articleId = parseInt(req.params.id, 10)
+    const article = await articleService.getArticle(req.auth.accountId, articleId)
+
+    const plainText = article.contentMarkdown
+      .replace(/!\[.*?\]\(.*?\)/g, '')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/[#*`_~]/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+
+    const totalChunks = ttsService.getChunkCount(plainText)
+
+    return {
+      totalChunks,
+      articleId,
+    }
+  },
+  z.object({
+    params: z.object({
+      id: z.string(),
+    }),
+  })
+)
+
 export const clearAudio = endpointAuth(
   async (req) => {
     const articleId = parseInt(req.params.id, 10)
