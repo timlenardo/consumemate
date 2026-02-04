@@ -55,6 +55,12 @@ export default function ArticleScreen() {
   const [showShareModal, setShowShareModal] = useState(false)
   const [voices, setVoices] = useState<Voice[]>([])
 
+  // Chunked audio state
+  const [audioChunks, setAudioChunks] = useState<{ data: string; contentType: string }[]>([])
+  const [currentChunkIndex, setCurrentChunkIndex] = useState(0)
+  const [totalChunks, setTotalChunks] = useState(0)
+  const [chunkLoadingProgress, setChunkLoadingProgress] = useState('')
+
   // New modal states
   const [showVoiceSelectionModal, setShowVoiceSelectionModal] = useState(false)
   const [showAudioControlModal, setShowAudioControlModal] = useState(false)
@@ -75,6 +81,11 @@ export default function ArticleScreen() {
   const isAutoScrollingRef = useRef(false)
   const lastScrollYRef = useRef(0)
 
+  // Chunked audio refs
+  const audioChunksRef = useRef<{ data: string; contentType: string }[]>([])
+  const isLoadingChunksRef = useRef(false)
+  const shouldStopLoadingRef = useRef(false)
+
   // Animation values for half-modal
   const overlayOpacity = useRef(new Animated.Value(0)).current
   const modalSlideY = useRef(new Animated.Value(300)).current
@@ -84,6 +95,10 @@ export default function ArticleScreen() {
     loadVoices()
 
     return () => {
+      // Stop loading chunks
+      shouldStopLoadingRef.current = true
+      isLoadingChunksRef.current = false
+
       if (soundRef.current) {
         soundRef.current.unloadAsync()
       }
@@ -231,12 +246,16 @@ export default function ArticleScreen() {
     }
   }
 
-  // Generate new audio
-  const generateAudio = async () => {
-    if (!article || !selectedVoice) return
+  // Play a specific chunk
+  const playChunk = async (chunkIndex: number, chunks: { data: string; contentType: string }[]) => {
+    if (chunkIndex >= chunks.length) {
+      // All chunks played
+      setIsPlaying(false)
+      return
+    }
 
-    setShowAudioControlModal(false)
-    setAudioLoading(true)
+    const chunk = chunks[chunkIndex]
+    if (!chunk) return
 
     try {
       if (soundRef.current) {
@@ -244,50 +263,125 @@ export default function ArticleScreen() {
         soundRef.current = null
       }
 
-      const { audioData, contentType, wordTimings: timings, processedText, estimatedDurationMs } = await api.generateAudio(article.id, selectedVoice.id)
-
-      // Update article with new audio data
-      setArticle({ ...article, audioUrl: 'cached', audioVoiceId: selectedVoice.id })
-
-      // Set estimated duration if provided (helps with concatenated MP3s)
-      if (estimatedDurationMs) {
-        setAudioDuration(estimatedDurationMs)
-      }
-
-      setWordTimings(timings || [])
-      setAudioText(processedText || '')
-
       const { sound, status: initialStatus } = await Audio.Sound.createAsync(
-        { uri: `data:${contentType};base64,${audioData}` },
+        { uri: `data:${chunk.contentType};base64,${chunk.data}` },
         { shouldPlay: true, rate: playbackSpeed, shouldCorrectPitch: true },
         (status: AVPlaybackStatus) => {
           if (status.isLoaded) {
             setIsPlaying(status.isPlaying)
-            setAudioPosition(status.positionMillis)
-            // Only update duration if we get a valid value (handles concatenated MP3s)
-            if (status.durationMillis && status.durationMillis > 0) {
-              setAudioDuration(prev => Math.max(prev, status.durationMillis || 0))
+            // Calculate position across all chunks
+            let prevChunksDuration = 0
+            for (let i = 0; i < chunkIndex; i++) {
+              // Estimate ~16 bytes per ms for MP3
+              const chunkData = audioChunksRef.current[i]?.data || ''
+              const chunkBytes = chunkData.length * 0.75 // base64 to bytes
+              prevChunksDuration += chunkBytes / 16
             }
+            setAudioPosition(prevChunksDuration + status.positionMillis)
+
             if (status.didJustFinish) {
-              setIsPlaying(false)
+              // Play next chunk
+              setCurrentChunkIndex(chunkIndex + 1)
+              playChunk(chunkIndex + 1, audioChunksRef.current)
             }
           }
         }
       )
 
       soundRef.current = sound
+      setCurrentChunkIndex(chunkIndex)
+    } catch (error: any) {
+      console.error('Error playing chunk:', error)
+    }
+  }
 
-      // Get accurate duration by checking status after load
-      if (initialStatus.isLoaded && initialStatus.durationMillis) {
-        setAudioDuration(initialStatus.durationMillis)
+  // Generate new audio using chunked API (sequential loading)
+  const generateAudio = async () => {
+    if (!article || !selectedVoice) return
+
+    setShowAudioControlModal(false)
+    setAudioLoading(true)
+    shouldStopLoadingRef.current = false
+
+    try {
+      if (soundRef.current) {
+        await soundRef.current.unloadAsync()
+        soundRef.current = null
       }
 
-      setIsPlaying(true)
-      setShowPlayerControls(true)
+      // Reset chunk state
+      setAudioChunks([])
+      audioChunksRef.current = []
+      setCurrentChunkIndex(0)
+      setTotalChunks(0)
+      setAudioDuration(0)
+
+      // Get total chunk count
+      setChunkLoadingProgress('Preparing audio...')
+      const { totalChunks: total } = await api.getAudioChunkCount(article.id, selectedVoice.id)
+      setTotalChunks(total)
+      console.log(`[Audio] Total chunks: ${total}`)
+
+      // Generate and play chunks sequentially
+      isLoadingChunksRef.current = true
+      let allWordTimings: WordTiming[] = []
+      let cumulativeDuration = 0
+
+      for (let i = 0; i < total && !shouldStopLoadingRef.current; i++) {
+        setChunkLoadingProgress(`Loading audio ${i + 1}/${total}...`)
+        console.log(`[Audio] Generating chunk ${i + 1}/${total}`)
+
+        const chunkResult = await api.generateAudioChunk(article.id, selectedVoice.id, i)
+
+        // Store the chunk
+        const chunkData = { data: chunkResult.audioData, contentType: chunkResult.contentType }
+        audioChunksRef.current = [...audioChunksRef.current, chunkData]
+        setAudioChunks(audioChunksRef.current)
+
+        // Accumulate word timings with offset
+        if (chunkResult.wordTimings && chunkResult.wordTimings.length > 0) {
+          const offsetTimings = chunkResult.wordTimings.map(t => ({
+            ...t,
+            start: t.start + cumulativeDuration,
+            end: t.end + cumulativeDuration,
+          }))
+          allWordTimings = [...allWordTimings, ...offsetTimings]
+          setWordTimings(allWordTimings)
+        }
+
+        // Estimate chunk duration from file size (~16 bytes per ms for MP3)
+        const chunkBytes = chunkResult.audioData.length * 0.75 // base64 to bytes
+        const chunkDurationMs = chunkBytes / 16
+        cumulativeDuration += chunkDurationMs
+        setAudioDuration(cumulativeDuration)
+
+        // Start playing immediately when first chunk is ready
+        if (i === 0) {
+          setAudioLoading(false)
+          setShowPlayerControls(true)
+          setIsPlaying(true)
+          await playChunk(0, audioChunksRef.current)
+        }
+
+        console.log(`[Audio] Chunk ${i + 1} ready, cumulative duration: ${Math.round(cumulativeDuration / 1000)}s`)
+      }
+
+      isLoadingChunksRef.current = false
+      setChunkLoadingProgress('')
+
+      // Update article with audio info
+      setArticle({ ...article, audioUrl: 'cached', audioVoiceId: selectedVoice.id })
+      console.log(`[Audio] All ${total} chunks loaded`)
+
     } catch (error: any) {
+      console.error('[Audio] Error:', error)
       showErrorAlert('Audio Error', error.message || 'Failed to generate audio')
+      isLoadingChunksRef.current = false
+      setChunkLoadingProgress('')
     } finally {
-      setAudioLoading(false)
+      if (isLoadingChunksRef.current === false) {
+        setAudioLoading(false)
+      }
     }
   }
 
@@ -305,14 +399,28 @@ export default function ArticleScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
+              // Stop loading chunks
+              shouldStopLoadingRef.current = true
+              isLoadingChunksRef.current = false
+
               await api.clearAudio(article.id)
               setArticle({ ...article, audioUrl: null, audioVoiceId: null })
+
               // Stop any playing audio
               if (soundRef.current) {
                 await soundRef.current.stopAsync()
                 await soundRef.current.unloadAsync()
                 soundRef.current = null
               }
+
+              // Clear chunk state
+              setAudioChunks([])
+              audioChunksRef.current = []
+              setCurrentChunkIndex(0)
+              setTotalChunks(0)
+              setChunkLoadingProgress('')
+              setWordTimings([])
+
               setShowPlayerControls(false)
               setIsPlaying(false)
               Alert.alert('Success', 'Audio cleared. You can now re-transcribe the article.')
@@ -339,26 +447,20 @@ export default function ArticleScreen() {
       return
     }
 
-    // If article already has audio, fetch and play it
+    // If we have chunks loaded, resume playing
+    if (audioChunksRef.current.length > 0) {
+      await playChunk(currentChunkIndex, audioChunksRef.current)
+      return
+    }
+
+    // If article already has audio (cached on server), use chunked loading
     if (article.audioUrl || article.audioVoiceId) {
-      setAudioLoading(true)
-      try {
-        const { audioData, contentType, wordTimings: timings, processedText, estimatedDurationMs } = await api.generateAudio(
-          article.id,
-          article.audioVoiceId || selectedVoice?.id || voices[0]?.id
-        )
-        setWordTimings(timings || [])
-        setAudioText(processedText || '')
-        // Set estimated duration if provided (helps with concatenated MP3s)
-        if (estimatedDurationMs) {
-          setAudioDuration(estimatedDurationMs)
-        }
-        await playCachedAudio(audioData, contentType)
-      } catch (error: any) {
-        showErrorAlert('Audio Error', error.message || 'Failed to load audio')
-      } finally {
-        setAudioLoading(false)
+      // Use the cached voice or selected voice
+      const voiceToUse = article.audioVoiceId || selectedVoice?.id || voices[0]?.id
+      if (voiceToUse) {
+        setSelectedVoice(voices.find(v => v.id === voiceToUse) || selectedVoice)
       }
+      await generateAudio()
       return
     }
 
@@ -1009,6 +1111,15 @@ export default function ArticleScreen() {
       {/* Bottom Audio Player Controls */}
       {showPlayerControls && (
         <View style={[styles.bottomPlayer, { backgroundColor: theme.surface, borderTopColor: theme.border }]}>
+          {/* Chunk loading progress */}
+          {chunkLoadingProgress ? (
+            <View style={styles.chunkProgressContainer}>
+              <ActivityIndicator size="small" color={theme.primary} />
+              <Text style={[styles.chunkProgressText, { color: theme.textMuted }]}>
+                {chunkLoadingProgress}
+              </Text>
+            </View>
+          ) : null}
           <View style={styles.progressContainer}>
             <Text style={[styles.timeText, { color: theme.textMuted }]}>
               {formatTime(audioPosition)}
@@ -1062,15 +1173,28 @@ export default function ArticleScreen() {
             <TouchableOpacity
               style={styles.closePlayerButton}
               onPress={async () => {
+                // Stop loading more chunks
+                shouldStopLoadingRef.current = true
+                isLoadingChunksRef.current = false
+
                 if (soundRef.current) {
                   await soundRef.current.stopAsync()
                   await soundRef.current.unloadAsync()
                   soundRef.current = null
                 }
+
+                // Reset chunk state
+                setAudioChunks([])
+                audioChunksRef.current = []
+                setCurrentChunkIndex(0)
+                setTotalChunks(0)
+                setChunkLoadingProgress('')
+
                 setShowPlayerControls(false)
                 setIsPlaying(false)
                 setAudioPosition(0)
                 setAudioDuration(0)
+                setWordTimings([])
               }}
             >
               <Ionicons name="close" size={24} color={theme.textMuted} />
@@ -1116,6 +1240,17 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     paddingBottom: spacing.lg,
     borderTopWidth: 1,
+  },
+  chunkProgressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: spacing.xs,
+    gap: spacing.sm,
+  },
+  chunkProgressText: {
+    fontSize: 12,
+    fontFamily: 'Georgia',
   },
   progressContainer: {
     flexDirection: 'row',
