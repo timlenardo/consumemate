@@ -86,6 +86,8 @@ export default function ArticleScreen() {
   const audioChunksRef = useRef<{ data: string; contentType: string }[]>([])
   const isLoadingChunksRef = useRef(false)
   const shouldStopLoadingRef = useRef(false)
+  const playbackSpeedRef = useRef(1.0) // Track current speed for chunk transitions
+  const isTogglingPlaybackRef = useRef(false) // Prevent race conditions on play/pause
 
   // Animation values for half-modal
   const overlayOpacity = useRef(new Animated.Value(0)).current
@@ -284,9 +286,11 @@ export default function ArticleScreen() {
         soundRef.current = null
       }
 
+      // Use ref for playback speed to ensure correct speed on chunk transitions
+      const currentSpeed = playbackSpeedRef.current
       const { sound, status: initialStatus } = await Audio.Sound.createAsync(
         { uri: `data:${chunk.contentType};base64,${chunk.data}` },
-        { shouldPlay: true, rate: playbackSpeed, shouldCorrectPitch: true },
+        { shouldPlay: true, rate: currentSpeed, shouldCorrectPitch: true },
         (status: AVPlaybackStatus) => {
           if (status.isLoaded) {
             setIsPlaying(status.isPlaying)
@@ -461,47 +465,69 @@ export default function ArticleScreen() {
   const handleAudioButtonPress = async () => {
     if (!article) return
 
-    // If audio is currently loaded and playing/paused, toggle playback
-    if (soundRef.current) {
+    // Prevent race conditions
+    if (isTogglingPlaybackRef.current) {
+      console.log('[Audio] Audio button press already in progress, ignoring')
+      return
+    }
+
+    isTogglingPlaybackRef.current = true
+    try {
+      // If audio is currently loaded and playing/paused, toggle playback
+      if (soundRef.current) {
+        if (isPlaying) {
+          await soundRef.current.pauseAsync()
+        } else {
+          await soundRef.current.playAsync()
+        }
+        return
+      }
+
+      // If we have chunks loaded, resume playing
+      if (audioChunksRef.current.length > 0) {
+        await playChunk(currentChunkIndex, audioChunksRef.current)
+        return
+      }
+
+      // If article already has audio (cached on server), use chunked loading
+      if (article.audioUrl || article.audioVoiceId) {
+        // Use the cached voice or selected voice
+        const voiceToUse = article.audioVoiceId || selectedVoice?.id || voices[0]?.id
+        if (voiceToUse) {
+          setSelectedVoice(voices.find(v => v.id === voiceToUse) || selectedVoice)
+        }
+        await generateAudio()
+        return
+      }
+
+      // No audio exists - show the audio control modal
+      setShowAudioControlModal(true)
+    } finally {
+      isTogglingPlaybackRef.current = false
+    }
+  }
+
+  const handleTogglePlayback = async () => {
+    // Prevent race conditions - ignore if already processing
+    if (isTogglingPlaybackRef.current) {
+      console.log('[Audio] Toggle already in progress, ignoring')
+      return
+    }
+
+    isTogglingPlaybackRef.current = true
+    try {
+      if (!soundRef.current) {
+        await handleAudioButtonPress()
+        return
+      }
+
       if (isPlaying) {
         await soundRef.current.pauseAsync()
       } else {
         await soundRef.current.playAsync()
       }
-      return
-    }
-
-    // If we have chunks loaded, resume playing
-    if (audioChunksRef.current.length > 0) {
-      await playChunk(currentChunkIndex, audioChunksRef.current)
-      return
-    }
-
-    // If article already has audio (cached on server), use chunked loading
-    if (article.audioUrl || article.audioVoiceId) {
-      // Use the cached voice or selected voice
-      const voiceToUse = article.audioVoiceId || selectedVoice?.id || voices[0]?.id
-      if (voiceToUse) {
-        setSelectedVoice(voices.find(v => v.id === voiceToUse) || selectedVoice)
-      }
-      await generateAudio()
-      return
-    }
-
-    // No audio exists - show the audio control modal
-    setShowAudioControlModal(true)
-  }
-
-  const handleTogglePlayback = async () => {
-    if (!soundRef.current) {
-      handleAudioButtonPress()
-      return
-    }
-
-    if (isPlaying) {
-      await soundRef.current.pauseAsync()
-    } else {
-      await soundRef.current.playAsync()
+    } finally {
+      isTogglingPlaybackRef.current = false
     }
   }
 
@@ -530,6 +556,7 @@ export default function ArticleScreen() {
     const nextIndex = (currentIndex + 1) % PLAYBACK_SPEEDS.length
     const newSpeed = PLAYBACK_SPEEDS[nextIndex]
     setPlaybackSpeed(newSpeed)
+    playbackSpeedRef.current = newSpeed // Keep ref in sync
 
     if (soundRef.current) {
       await soundRef.current.setRateAsync(newSpeed, true)
@@ -692,7 +719,7 @@ export default function ArticleScreen() {
       if (wordY !== undefined) {
         isAutoScrollingRef.current = true
         // Scroll to keep current word in upper third of screen
-        const targetY = Math.max(0, wordY - SCREEN_HEIGHT / 3)
+        const targetY = Math.max(0, wordY - SCREEN_HEIGHT / 2)
         scrollViewRef.current.scrollTo({ y: targetY, animated: true })
         setCurrentWordY(wordY)
         // Reset auto-scroll flag after animation
@@ -714,7 +741,7 @@ export default function ArticleScreen() {
     // If playing and user scrolls significantly, mark as manual scroll
     if (isPlaying && wordTimings.length > 0) {
       const wordY = wordPositionsRef.current.get(currentWordIndex) || 0
-      const expectedY = Math.max(0, wordY - SCREEN_HEIGHT / 3)
+      const expectedY = Math.max(0, wordY - SCREEN_HEIGHT / 2)
       const scrollDiff = Math.abs(scrollY - expectedY)
 
       if (scrollDiff > 100) {
@@ -730,7 +757,7 @@ export default function ArticleScreen() {
       const wordY = wordPositionsRef.current.get(currentWordIndex)
       if (wordY !== undefined) {
         isAutoScrollingRef.current = true
-        const targetY = Math.max(0, wordY - SCREEN_HEIGHT / 3)
+        const targetY = Math.max(0, wordY - SCREEN_HEIGHT / 2)
         scrollViewRef.current.scrollTo({ y: targetY, animated: true })
         setTimeout(() => {
           isAutoScrollingRef.current = false
