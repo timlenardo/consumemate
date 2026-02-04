@@ -4,8 +4,7 @@
   "private": true,
   "workspaces": [
     "backend",
-    "chrome-extension",
-    "mobile"
+    "chrome-extension"
   ],
   "engines": {
     "node": "20.x"
@@ -13,15 +12,8 @@
   "scripts": {
     "backend": "npm run dev --workspace=backend",
     "extension": "npm run dev --workspace=chrome-extension",
-    "mobile": "npm run start --workspace=mobile",
+    "heroku-prebuild": "rm -rf mobile ios swift",
     "heroku-postbuild": "npm run build --workspace=backend",
-    "start": "npm run start --workspace=backend",
-    "android": "expo run:android",
-    "ios": "expo run:ios"
-  },
-  "dependencies": {
-    "expo": "~51.0.28",
-    "react": "18.2.0",
-    "react-native": "0.74.5"
+    "start": "npm run start --workspace=backend"
   }
 }
