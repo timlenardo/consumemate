@@ -200,8 +200,13 @@ export const generateAudioChunk = endpointAuth(
 
     const article = await articleService.getArticle(req.auth.accountId, articleId)
 
+    // Debug: log what we have
+    console.log(`[generateAudioChunk] Article ${articleId}, chunk ${chunkIndex}, voiceId: ${voiceId}`)
+    console.log(`[generateAudioChunk] audioChunksData exists: ${!!article.audioChunksData}, length: ${article.audioChunksData?.length || 0}`)
+
     // Check for cached chunk first
     const cachedChunk = articleService.getCachedChunk(article, voiceId, chunkIndex)
+    console.log(`[generateAudioChunk] Cached chunk found: ${!!cachedChunk}`)
     if (cachedChunk) {
       console.log(`[generateAudioChunk] Returning cached chunk ${chunkIndex} for article ${articleId}`)
       // Get total chunks to return in response
