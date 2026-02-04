@@ -37,6 +37,42 @@ export interface Voice {
   category?: string
 }
 
+// Simple semaphore for limiting concurrent requests
+class Semaphore {
+  private running = 0
+  private queue: (() => void)[] = []
+
+  constructor(private maxConcurrent: number) {}
+
+  async acquire(): Promise<void> {
+    if (this.running < this.maxConcurrent) {
+      this.running++
+      return
+    }
+    return new Promise<void>((resolve) => {
+      this.queue.push(resolve)
+    })
+  }
+
+  release(): void {
+    this.running--
+    const next = this.queue.shift()
+    if (next) {
+      this.running++
+      next()
+    }
+  }
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    await this.acquire()
+    try {
+      return await fn()
+    } finally {
+      this.release()
+    }
+  }
+}
+
 // ElevenLabs implementation
 class ElevenLabsTTSProvider implements TTSProvider {
   private client: ElevenLabsClient
@@ -44,6 +80,8 @@ class ElevenLabsTTSProvider implements TTSProvider {
   // When true, limits to ~100 words to conserve API quota (for local development)
   private readonly TEST_MODE = env.ttsTestMode
   private readonly TEST_MODE_WORD_LIMIT = 100
+  // Limit concurrent ElevenLabs API requests (subscription limit is 5)
+  private readonly apiSemaphore = new Semaphore(4)  // Use 4 to leave headroom
 
   constructor(apiKey: string) {
     this.client = new ElevenLabsClient({ apiKey })
@@ -156,10 +194,12 @@ class ElevenLabsTTSProvider implements TTSProvider {
 
   // Convert text to audio with word timestamps
   private async convertWithTimestamps(text: string, voiceId: string): Promise<{ audio: Buffer; wordTimings: WordTiming[] }> {
-    const response = await this.client.textToSpeech.convertWithTimestamps(voiceId, {
-      text,
-      modelId: 'eleven_multilingual_v2',
-    })
+    const response = await this.apiSemaphore.run(() =>
+      this.client.textToSpeech.convertWithTimestamps(voiceId, {
+        text,
+        modelId: 'eleven_multilingual_v2',
+      })
+    )
 
     const audioChunks: Buffer[] = []
     const wordTimings: WordTiming[] = []
@@ -218,19 +258,21 @@ class ElevenLabsTTSProvider implements TTSProvider {
 
   // Fallback: Convert without timestamps (faster but no word sync)
   private async convertChunkToAudio(text: string, voiceId: string): Promise<Buffer> {
-    const response = await this.client.textToSpeech.convert(voiceId, {
-      text,
-      modelId: 'eleven_multilingual_v2',
-    })
+    return this.apiSemaphore.run(async () => {
+      const response = await this.client.textToSpeech.convert(voiceId, {
+        text,
+        modelId: 'eleven_multilingual_v2',
+      })
 
-    const chunks: Buffer[] = []
-    const reader = response.getReader()
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      chunks.push(Buffer.from(value))
-    }
-    return Buffer.concat(chunks)
+      const chunks: Buffer[] = []
+      const reader = response.getReader()
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        chunks.push(Buffer.from(value))
+      }
+      return Buffer.concat(chunks)
+    })
   }
 
   async generateSpeech(text: string, voiceId: string): Promise<SpeechResult> {
@@ -292,7 +334,7 @@ class ElevenLabsTTSProvider implements TTSProvider {
   }
 
   async getVoices(): Promise<Voice[]> {
-    const response = await this.client.voices.getAll()
+    const response = await this.apiSemaphore.run(() => this.client.voices.getAll())
 
     // Filter to popular/recommended voices
     const popularVoiceIds = [
