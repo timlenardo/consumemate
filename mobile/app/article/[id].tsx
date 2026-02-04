@@ -60,6 +60,7 @@ export default function ArticleScreen() {
   const [currentChunkIndex, setCurrentChunkIndex] = useState(0)
   const [totalChunks, setTotalChunks] = useState(0)
   const [chunkLoadingProgress, setChunkLoadingProgress] = useState('')
+  const [chunkDurations, setChunkDurations] = useState<number[]>([]) // Debug: track each chunk's duration
 
   // New modal states
   const [showVoiceSelectionModal, setShowVoiceSelectionModal] = useState(false)
@@ -335,6 +336,7 @@ export default function ArticleScreen() {
       setCurrentChunkIndex(0)
       setTotalChunks(0)
       setAudioDuration(0)
+      setChunkDurations([])
 
       // Get total chunk count
       setChunkLoadingProgress('Preparing audio...')
@@ -374,6 +376,8 @@ export default function ArticleScreen() {
         const chunkDurationMs = chunkBytes / 16
         cumulativeDuration += chunkDurationMs
         setAudioDuration(cumulativeDuration)
+        setChunkDurations(prev => [...prev, chunkDurationMs])
+        console.log(`[Audio] Chunk ${i + 1} duration: ${Math.round(chunkDurationMs / 1000)}s, total: ${Math.round(cumulativeDuration / 1000)}s`)
 
         // Start playing immediately when first chunk is ready (don't await - let loading continue)
         if (i === 0) {
@@ -1131,6 +1135,18 @@ export default function ArticleScreen() {
       {/* Bottom Audio Player Controls */}
       {showPlayerControls && (
         <View style={[styles.bottomPlayer, { backgroundColor: theme.surface, borderTopColor: theme.border }]}>
+          {/* Debug: Chunk info */}
+          <View style={styles.debugContainer}>
+            <Text style={[styles.debugText, { color: theme.textMuted }]}>
+              Chunks: {audioChunks.length}/{totalChunks} | Playing: #{currentChunkIndex + 1}
+            </Text>
+            <Text style={[styles.debugText, { color: theme.textMuted }]}>
+              Durations: [{chunkDurations.map(d => Math.round(d / 1000) + 's').join(', ')}]
+            </Text>
+            <Text style={[styles.debugText, { color: theme.textMuted }]}>
+              Total: {Math.round(chunkDurations.reduce((a, b) => a + b, 0) / 1000)}s | audioDuration: {Math.round(audioDuration / 1000)}s
+            </Text>
+          </View>
           {/* Chunk loading progress */}
           {chunkLoadingProgress ? (
             <View style={styles.chunkProgressContainer}>
@@ -1260,6 +1276,16 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     paddingBottom: spacing.lg,
     borderTopWidth: 1,
+  },
+  debugContainer: {
+    backgroundColor: 'rgba(0,0,0,0.1)',
+    padding: spacing.xs,
+    marginBottom: spacing.xs,
+    borderRadius: borderRadius.sm,
+  },
+  debugText: {
+    fontSize: 10,
+    fontFamily: 'Courier',
   },
   chunkProgressContainer: {
     flexDirection: 'row',
