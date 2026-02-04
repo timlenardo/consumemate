@@ -15,5 +15,8 @@
     "heroku-prebuild": "rm -rf mobile ios swift",
     "heroku-postbuild": "npm run build --workspace=backend",
     "start": "npm run start --workspace=backend"
+  },
+  "dependencies": {
+    "@bestcodes/edge-tts": "^3.0.1"
   }
 }
