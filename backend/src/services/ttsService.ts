@@ -1,21 +1,30 @@
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js'
 import { env } from '@config/env'
 
-// Types for dynamic import of @bestcodes/edge-tts (ESM module)
+// Types for Edge TTS
 type EdgeTTSModule = {
   generateSpeech: (options: { text: string; voice: string }) => Promise<Buffer>
   getVoices: () => Promise<{ ShortName: string; FriendlyName: string; Gender: string; Locale: string }[]>
 }
 
 let edgeTtsModule: EdgeTTSModule | null = null
+let edgeTtsLoadError: Error | null = null
 
 async function loadEdgeTts(): Promise<EdgeTTSModule> {
+  if (edgeTtsLoadError) {
+    throw edgeTtsLoadError
+  }
   if (!edgeTtsModule) {
-    // Dynamic import for ESM module
-    const module = await import('@bestcodes/edge-tts')
-    edgeTtsModule = {
-      generateSpeech: module.generateSpeech,
-      getVoices: module.getVoices,
+    try {
+      // Dynamic import for ESM module - this may fail in CommonJS context
+      const module = await (eval('import("@bestcodes/edge-tts")') as Promise<any>)
+      edgeTtsModule = {
+        generateSpeech: module.generateSpeech,
+        getVoices: module.getVoices,
+      }
+    } catch (error: any) {
+      edgeTtsLoadError = new Error(`Edge TTS is not available: ${error.message}. Please use ElevenLabs instead.`)
+      throw edgeTtsLoadError
     }
   }
   return edgeTtsModule
