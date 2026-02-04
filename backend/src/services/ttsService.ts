@@ -12,6 +12,7 @@ export interface SpeechResult {
   audio: Buffer
   wordTimings: WordTiming[]
   processedText: string  // The actual text that was converted to speech
+  estimatedDurationMs?: number  // Estimated duration for concatenated audio
 }
 
 export interface ChunkedSpeechResult {
@@ -326,10 +327,16 @@ class ElevenLabsTTSProvider implements TTSProvider {
     const combinedAudio = Buffer.concat(audioBuffers)
     console.log(`Combined audio size: ${combinedAudio.length} bytes`)
 
+    // Estimate duration: ElevenLabs outputs ~128kbps MP3
+    // duration (ms) = bytes * 8 / 128 (kbps) = bytes / 16
+    const estimatedDurationMs = Math.round(combinedAudio.length / 16)
+    console.log(`Estimated duration: ${estimatedDurationMs}ms (${Math.round(estimatedDurationMs / 1000)}s)`)
+
     return {
       audio: combinedAudio,
       wordTimings: [],
       processedText: cleanedText,
+      estimatedDurationMs,
     }
   }
 

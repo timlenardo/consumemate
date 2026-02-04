@@ -178,6 +178,7 @@ export const generateAudio = endpointAuth(
       contentType: 'audio/mpeg',
       wordTimings: speechResult.wordTimings,
       processedText: speechResult.processedText,
+      estimatedDurationMs: speechResult.estimatedDurationMs,
       cached: false,
     }
   },

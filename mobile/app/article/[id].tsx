@@ -199,14 +199,17 @@ export default function ArticleScreen() {
         soundRef.current = null
       }
 
-      const { sound } = await Audio.Sound.createAsync(
+      const { sound, status: initialStatus } = await Audio.Sound.createAsync(
         { uri: `data:${contentType};base64,${audioData}` },
         { shouldPlay: true, rate: playbackSpeed, shouldCorrectPitch: true },
         (status: AVPlaybackStatus) => {
           if (status.isLoaded) {
             setIsPlaying(status.isPlaying)
             setAudioPosition(status.positionMillis)
-            setAudioDuration(status.durationMillis || 0)
+            // Only update duration if we get a valid value (handles concatenated MP3s)
+            if (status.durationMillis && status.durationMillis > 0) {
+              setAudioDuration(prev => Math.max(prev, status.durationMillis || 0))
+            }
             if (status.didJustFinish) {
               setIsPlaying(false)
             }
@@ -215,6 +218,12 @@ export default function ArticleScreen() {
       )
 
       soundRef.current = sound
+
+      // Get accurate duration by checking status after load
+      if (initialStatus.isLoaded && initialStatus.durationMillis) {
+        setAudioDuration(initialStatus.durationMillis)
+      }
+
       setIsPlaying(true)
       setShowPlayerControls(true)
     } catch (error: any) {
@@ -235,22 +244,30 @@ export default function ArticleScreen() {
         soundRef.current = null
       }
 
-      const { audioData, contentType, wordTimings: timings, processedText } = await api.generateAudio(article.id, selectedVoice.id)
+      const { audioData, contentType, wordTimings: timings, processedText, estimatedDurationMs } = await api.generateAudio(article.id, selectedVoice.id)
 
       // Update article with new audio data
       setArticle({ ...article, audioUrl: 'cached', audioVoiceId: selectedVoice.id })
 
+      // Set estimated duration if provided (helps with concatenated MP3s)
+      if (estimatedDurationMs) {
+        setAudioDuration(estimatedDurationMs)
+      }
+
       setWordTimings(timings || [])
       setAudioText(processedText || '')
 
-      const { sound } = await Audio.Sound.createAsync(
+      const { sound, status: initialStatus } = await Audio.Sound.createAsync(
         { uri: `data:${contentType};base64,${audioData}` },
         { shouldPlay: true, rate: playbackSpeed, shouldCorrectPitch: true },
         (status: AVPlaybackStatus) => {
           if (status.isLoaded) {
             setIsPlaying(status.isPlaying)
             setAudioPosition(status.positionMillis)
-            setAudioDuration(status.durationMillis || 0)
+            // Only update duration if we get a valid value (handles concatenated MP3s)
+            if (status.durationMillis && status.durationMillis > 0) {
+              setAudioDuration(prev => Math.max(prev, status.durationMillis || 0))
+            }
             if (status.didJustFinish) {
               setIsPlaying(false)
             }
@@ -259,6 +276,12 @@ export default function ArticleScreen() {
       )
 
       soundRef.current = sound
+
+      // Get accurate duration by checking status after load
+      if (initialStatus.isLoaded && initialStatus.durationMillis) {
+        setAudioDuration(initialStatus.durationMillis)
+      }
+
       setIsPlaying(true)
       setShowPlayerControls(true)
     } catch (error: any) {
@@ -320,12 +343,16 @@ export default function ArticleScreen() {
     if (article.audioUrl || article.audioVoiceId) {
       setAudioLoading(true)
       try {
-        const { audioData, contentType, wordTimings: timings, processedText } = await api.generateAudio(
+        const { audioData, contentType, wordTimings: timings, processedText, estimatedDurationMs } = await api.generateAudio(
           article.id,
           article.audioVoiceId || selectedVoice?.id || voices[0]?.id
         )
         setWordTimings(timings || [])
         setAudioText(processedText || '')
+        // Set estimated duration if provided (helps with concatenated MP3s)
+        if (estimatedDurationMs) {
+          setAudioDuration(estimatedDurationMs)
+        }
         await playCachedAudio(audioData, contentType)
       } catch (error: any) {
         showErrorAlert('Audio Error', error.message || 'Failed to load audio')

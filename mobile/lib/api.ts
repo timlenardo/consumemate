@@ -166,6 +166,7 @@ class ApiClient {
     contentType: string
     wordTimings: WordTiming[]
     processedText: string
+    estimatedDurationMs?: number
   }> {
     return this.request(`/v1/articles/${id}/audio`, {
       method: 'POST',
