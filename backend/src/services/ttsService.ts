@@ -1,4 +1,5 @@
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js'
+import { tts as edgeTts, getVoices as getEdgeVoices } from 'edge-tts'
 import { env } from '@config/env'
 
 // Word timing for text-audio sync
@@ -413,32 +414,273 @@ class ElevenLabsTTSProvider implements TTSProvider {
   }
 }
 
-// Factory function - easily swap providers here
-let ttsProvider: TTSProvider | null = null
+// Edge TTS implementation (free Microsoft Edge voices)
+class EdgeTTSProvider implements TTSProvider {
+  private readonly MAX_CHUNK_CHARS = 1000
+  private cachedVoices: Voice[] | null = null
 
-export function getTTSProvider(): TTSProvider {
-  if (!ttsProvider) {
+  // Clean text for TTS - same logic as ElevenLabs
+  private prepareTextForSpeech(text: string): string {
+    let cleaned = text
+
+    // Remove markdown images
+    cleaned = cleaned.replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+    cleaned = cleaned.replace(/!\[[^\]]*\]\[[^\]]*\]/g, '')
+    cleaned = cleaned.replace(/!\[[^\]]*\]/g, '')
+    cleaned = cleaned.replace(/<img[^>]*>/gi, '')
+
+    // Convert markdown links to text
+    cleaned = cleaned.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    cleaned = cleaned.replace(/\[([^\]]+)\]\[[^\]]*\]/g, '$1')
+
+    // Remove URLs
+    cleaned = cleaned.replace(/https?:\/\/[^\s\])>"']+/gi, '')
+    cleaned = cleaned.replace(/www\.[^\s\])>"']+/gi, '')
+
+    // Remove markdown formatting
+    cleaned = cleaned.replace(/#{1,6}\s*/g, '')
+    cleaned = cleaned.replace(/\*\*([^*]+)\*\*/g, '$1')
+    cleaned = cleaned.replace(/\*([^*]+)\*/g, '$1')
+    cleaned = cleaned.replace(/__([^_]+)__/g, '$1')
+    cleaned = cleaned.replace(/_([^_]+)_/g, '$1')
+    cleaned = cleaned.replace(/`([^`]+)`/g, '$1')
+    cleaned = cleaned.replace(/```[\s\S]*?```/g, '')
+    cleaned = cleaned.replace(/~~([^~]+)~~/g, '$1')
+    cleaned = cleaned.replace(/<[^>]+>/gi, '')
+    cleaned = cleaned.replace(/\bhttps?:\/\/\S+/gi, '')
+
+    // Clean up whitespace
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
+    cleaned = cleaned.replace(/  +/g, ' ')
+    cleaned = cleaned.trim()
+
+    return cleaned
+  }
+
+  // Split text into chunks at sentence boundaries
+  private splitIntoChunks(text: string): string[] {
+    const chunks: string[] = []
+    let remaining = text
+
+    while (remaining.length > 0) {
+      if (remaining.length <= this.MAX_CHUNK_CHARS) {
+        chunks.push(remaining)
+        break
+      }
+
+      let splitPoint = this.MAX_CHUNK_CHARS
+      const searchText = remaining.substring(0, this.MAX_CHUNK_CHARS)
+      const sentenceEnders = ['. ', '! ', '? ', '.\n', '!\n', '?\n']
+      let bestSplit = -1
+
+      for (const ender of sentenceEnders) {
+        const lastIndex = searchText.lastIndexOf(ender)
+        if (lastIndex > bestSplit && lastIndex > this.MAX_CHUNK_CHARS * 0.5) {
+          bestSplit = lastIndex + ender.length - 1
+        }
+      }
+
+      if (bestSplit > 0) {
+        splitPoint = bestSplit + 1
+      } else {
+        const lastNewline = searchText.lastIndexOf('\n')
+        if (lastNewline > this.MAX_CHUNK_CHARS * 0.5) {
+          splitPoint = lastNewline + 1
+        } else {
+          const lastSpace = searchText.lastIndexOf(' ')
+          if (lastSpace > this.MAX_CHUNK_CHARS * 0.5) {
+            splitPoint = lastSpace + 1
+          }
+        }
+      }
+
+      chunks.push(remaining.substring(0, splitPoint).trim())
+      remaining = remaining.substring(splitPoint).trim()
+    }
+
+    return chunks.filter(chunk => chunk.length > 0)
+  }
+
+  // Generate estimated word timings based on text and audio duration
+  private generateEstimatedWordTimings(text: string, audioDurationMs: number): WordTiming[] {
+    const words = text.split(/\s+/).filter(w => w.length > 0)
+    if (words.length === 0) return []
+
+    const avgWordDurationMs = audioDurationMs / words.length
+
+    return words.map((word, index) => ({
+      word: word.replace(/[.,!?;:'"]/g, ''),
+      start: Math.round(index * avgWordDurationMs),
+      end: Math.round((index + 1) * avgWordDurationMs - 10),
+    }))
+  }
+
+  async generateSpeech(text: string, voiceId: string): Promise<SpeechResult> {
+    const cleanedText = this.prepareTextForSpeech(text)
+    console.log(`[EdgeTTS] Generating speech for ${cleanedText.length} chars with voice ${voiceId}`)
+
+    const audioBuffer = await edgeTts(cleanedText, { voice: voiceId })
+
+    // Estimate duration: Edge TTS outputs ~128kbps MP3
+    const estimatedDurationMs = Math.round(audioBuffer.length / 16)
+    const wordTimings = this.generateEstimatedWordTimings(cleanedText, estimatedDurationMs)
+
+    console.log(`[EdgeTTS] Generated ${audioBuffer.length} bytes, ~${Math.round(estimatedDurationMs / 1000)}s`)
+
+    return {
+      audio: audioBuffer,
+      wordTimings,
+      processedText: cleanedText,
+      estimatedDurationMs,
+    }
+  }
+
+  async getVoices(): Promise<Voice[]> {
+    if (this.cachedVoices) {
+      return this.cachedVoices
+    }
+
+    const allVoices = await getEdgeVoices()
+
+    // Filter to high-quality English voices
+    const preferredVoices = [
+      // US voices
+      { id: 'en-US-AriaNeural', name: 'Aria (US)', category: 'neural' },
+      { id: 'en-US-JennyNeural', name: 'Jenny (US)', category: 'neural' },
+      { id: 'en-US-GuyNeural', name: 'Guy (US)', category: 'neural' },
+      { id: 'en-US-ChristopherNeural', name: 'Christopher (US)', category: 'neural' },
+      { id: 'en-US-EricNeural', name: 'Eric (US)', category: 'neural' },
+      { id: 'en-US-MichelleNeural', name: 'Michelle (US)', category: 'neural' },
+      { id: 'en-US-RogerNeural', name: 'Roger (US)', category: 'neural' },
+      { id: 'en-US-SteffanNeural', name: 'Steffan (US)', category: 'neural' },
+      // UK voices
+      { id: 'en-GB-SoniaNeural', name: 'Sonia (UK)', category: 'neural' },
+      { id: 'en-GB-RyanNeural', name: 'Ryan (UK)', category: 'neural' },
+      { id: 'en-GB-LibbyNeural', name: 'Libby (UK)', category: 'neural' },
+      // Australian
+      { id: 'en-AU-NatashaNeural', name: 'Natasha (AU)', category: 'neural' },
+      { id: 'en-AU-WilliamNeural', name: 'William (AU)', category: 'neural' },
+    ]
+
+    // Verify which voices are actually available
+    const availableVoiceIds = new Set(allVoices.map(v => v.ShortName))
+
+    this.cachedVoices = preferredVoices
+      .filter(v => availableVoiceIds.has(v.id))
+      .map(v => ({
+        id: v.id,
+        name: v.name,
+        category: v.category,
+      }))
+
+    console.log(`[EdgeTTS] Found ${this.cachedVoices.length} preferred voices`)
+    return this.cachedVoices
+  }
+
+  getChunkCount(text: string): number {
+    const cleanedText = this.prepareTextForSpeech(text)
+    const chunks = this.splitIntoChunks(cleanedText)
+    return chunks.length
+  }
+
+  async generateChunk(text: string, voiceId: string, chunkIndex: number): Promise<ChunkedSpeechResult> {
+    const cleanedText = this.prepareTextForSpeech(text)
+    const chunks = this.splitIntoChunks(cleanedText)
+    const totalChunks = chunks.length
+
+    if (chunkIndex < 0 || chunkIndex >= totalChunks) {
+      throw new Error(`Invalid chunk index ${chunkIndex}. Total chunks: ${totalChunks}`)
+    }
+
+    const chunkText = chunks[chunkIndex]
+    console.log(`[EdgeTTS] Generating chunk ${chunkIndex + 1}/${totalChunks} (${chunkText.length} chars)`)
+
+    const audioBuffer = await edgeTts(chunkText, { voice: voiceId })
+
+    // Estimate duration and generate word timings
+    const estimatedDurationMs = Math.round(audioBuffer.length / 16)
+    const wordTimings = this.generateEstimatedWordTimings(chunkText, estimatedDurationMs)
+
+    console.log(`[EdgeTTS] Chunk ${chunkIndex + 1} generated: ${audioBuffer.length} bytes, ${wordTimings.length} words`)
+
+    return {
+      audio: audioBuffer,
+      wordTimings,
+      chunkText,
+      chunkIndex,
+      totalChunks,
+    }
+  }
+}
+
+// Provider types
+export type TTSProviderType = 'elevenlabs' | 'edge'
+
+// Factory function - easily swap providers here
+let elevenLabsProvider: TTSProvider | null = null
+let edgeTtsProvider: TTSProvider | null = null
+
+export function getTTSProvider(type: TTSProviderType = 'elevenlabs'): TTSProvider {
+  if (type === 'edge') {
+    if (!edgeTtsProvider) {
+      edgeTtsProvider = new EdgeTTSProvider()
+    }
+    return edgeTtsProvider
+  }
+
+  // Default to ElevenLabs
+  if (!elevenLabsProvider) {
     if (!env.elevenLabsApiKey) {
       throw new Error('ElevenLabs API key not configured')
     }
-    ttsProvider = new ElevenLabsTTSProvider(env.elevenLabsApiKey)
+    elevenLabsProvider = new ElevenLabsTTSProvider(env.elevenLabsApiKey)
   }
-  return ttsProvider
+  return elevenLabsProvider
 }
 
-// Convenience exports
-export async function generateSpeech(text: string, voiceId: string): Promise<SpeechResult> {
-  return getTTSProvider().generateSpeech(text, voiceId)
+// Get a specific provider
+export function getElevenLabsProvider(): TTSProvider {
+  return getTTSProvider('elevenlabs')
 }
 
-export async function getAvailableVoices(): Promise<Voice[]> {
-  return getTTSProvider().getVoices()
+export function getEdgeTTSProvider(): TTSProvider {
+  return getTTSProvider('edge')
 }
 
-export function getChunkCount(text: string): number {
-  return getTTSProvider().getChunkCount(text)
+// Convenience exports (default to ElevenLabs for backwards compatibility)
+export async function generateSpeech(text: string, voiceId: string, provider: TTSProviderType = 'elevenlabs'): Promise<SpeechResult> {
+  return getTTSProvider(provider).generateSpeech(text, voiceId)
 }
 
-export async function generateChunk(text: string, voiceId: string, chunkIndex: number): Promise<ChunkedSpeechResult> {
-  return getTTSProvider().generateChunk(text, voiceId, chunkIndex)
+export async function getAvailableVoices(provider: TTSProviderType = 'elevenlabs'): Promise<Voice[]> {
+  return getTTSProvider(provider).getVoices()
+}
+
+export function getChunkCount(text: string, provider: TTSProviderType = 'elevenlabs'): number {
+  return getTTSProvider(provider).getChunkCount(text)
+}
+
+export async function generateChunk(text: string, voiceId: string, chunkIndex: number, provider: TTSProviderType = 'elevenlabs'): Promise<ChunkedSpeechResult> {
+  return getTTSProvider(provider).generateChunk(text, voiceId, chunkIndex)
+}
+
+// Get all voices from all providers
+export async function getAllVoices(): Promise<{ provider: TTSProviderType; voices: Voice[] }[]> {
+  const results: { provider: TTSProviderType; voices: Voice[] }[] = []
+
+  try {
+    const elevenLabsVoices = await getAvailableVoices('elevenlabs')
+    results.push({ provider: 'elevenlabs', voices: elevenLabsVoices })
+  } catch (error) {
+    console.error('[TTS] Failed to get ElevenLabs voices:', error)
+  }
+
+  try {
+    const edgeVoices = await getAvailableVoices('edge')
+    results.push({ provider: 'edge', voices: edgeVoices })
+  } catch (error) {
+    console.error('[TTS] Failed to get Edge TTS voices:', error)
+  }
+
+  return results
 }

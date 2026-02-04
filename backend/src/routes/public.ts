@@ -11,4 +11,7 @@ router.get('/read/:slug', ...endpointToArray(articleController.getPublicArticle)
 // Available voices (public so extension can show them)
 router.get('/voices', ...endpointToArray(voiceController.getVoices))
 
+// Get all voices from all providers
+router.get('/voices/all', ...endpointToArray(voiceController.getAllVoices))
+
 export default router

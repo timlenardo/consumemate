@@ -45,7 +45,10 @@ export interface Voice {
   name: string
   previewUrl?: string
   category?: string
+  provider?: 'elevenlabs' | 'edge'
 }
+
+export type TTSProvider = 'elevenlabs' | 'edge'
 
 export interface WordTiming {
   word: string
@@ -195,9 +198,49 @@ class ApiClient {
     await this.request(`/v1/articles/${id}/audio`, { method: 'DELETE' })
   }
 
+  // Chunked audio API - generates one chunk at a time
+  async getAudioChunkCount(id: number, voiceId?: string): Promise<{
+    totalChunks: number
+    articleId: number
+    voiceId: string | null
+    generatedChunks: number[]
+  }> {
+    const query = voiceId ? `?voiceId=${voiceId}` : ''
+    return this.request(`/v1/articles/${id}/audio/chunks${query}`)
+  }
+
+  async generateAudioChunk(
+    id: number,
+    voiceId: string,
+    chunkIndex: number,
+    provider: TTSProvider = 'elevenlabs'
+  ): Promise<{
+    audioData: string
+    contentType: string
+    wordTimings: WordTiming[]
+    chunkText: string
+    chunkIndex: number
+    totalChunks: number
+    cached: boolean
+    provider: string
+  }> {
+    return this.request(`/v1/articles/${id}/audio/chunk`, {
+      method: 'POST',
+      body: JSON.stringify({ voiceId, chunkIndex, provider }),
+    })
+  }
+
   // Voices
-  async getVoices(): Promise<{ voices: Voice[] }> {
-    return this.request('/voices')
+  async getVoices(provider?: TTSProvider): Promise<{ voices: Voice[]; provider: string }> {
+    const query = provider ? `?provider=${provider}` : ''
+    return this.request(`/voices${query}`)
+  }
+
+  // Get all voices from all providers
+  async getAllVoices(): Promise<{
+    providers: { provider: TTSProvider; voices: Voice[] }[]
+  }> {
+    return this.request('/voices/all')
   }
 
   // Public

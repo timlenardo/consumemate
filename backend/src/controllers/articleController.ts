@@ -196,16 +196,19 @@ export const generateAudio = endpointAuth(
 export const generateAudioChunk = endpointAuth(
   async (req) => {
     const articleId = parseInt(req.params.id, 10)
-    const { voiceId, chunkIndex } = req.body
+    const { voiceId, chunkIndex, provider = 'elevenlabs' } = req.body
 
     const article = await articleService.getArticle(req.auth.accountId, articleId)
 
+    // Create a cache key that includes the provider
+    const cacheVoiceId = `${provider}:${voiceId}`
+
     // Debug: log what we have
-    console.log(`[generateAudioChunk] Article ${articleId}, chunk ${chunkIndex}, voiceId: ${voiceId}`)
+    console.log(`[generateAudioChunk] Article ${articleId}, chunk ${chunkIndex}, voiceId: ${voiceId}, provider: ${provider}`)
     console.log(`[generateAudioChunk] audioChunksData exists: ${!!article.audioChunksData}, length: ${article.audioChunksData?.length || 0}`)
 
     // Check for cached chunk first
-    const cachedChunk = articleService.getCachedChunk(article, voiceId, chunkIndex)
+    const cachedChunk = articleService.getCachedChunk(article, cacheVoiceId, chunkIndex)
     console.log(`[generateAudioChunk] Cached chunk found: ${!!cachedChunk}`)
     if (cachedChunk) {
       console.log(`[generateAudioChunk] Returning cached chunk ${chunkIndex} for article ${articleId}`)
@@ -216,7 +219,7 @@ export const generateAudioChunk = endpointAuth(
         .replace(/[#*`_~]/g, '')
         .replace(/\n{3,}/g, '\n\n')
         .trim()
-      const totalChunks = ttsService.getChunkCount(plainText)
+      const totalChunks = ttsService.getChunkCount(plainText, provider as any)
 
       return {
         audioData: cachedChunk.audioData,
@@ -226,6 +229,7 @@ export const generateAudioChunk = endpointAuth(
         chunkIndex,
         totalChunks,
         cached: true,
+        provider,
       }
     }
 
@@ -237,13 +241,13 @@ export const generateAudioChunk = endpointAuth(
       .replace(/\n{3,}/g, '\n\n') // Normalize line breaks
       .trim()
 
-    const result = await ttsService.generateChunk(plainText, voiceId, chunkIndex)
+    const result = await ttsService.generateChunk(plainText, voiceId, chunkIndex, provider as any)
     const audioBase64 = result.audio.toString('base64')
 
-    // Save the chunk to cache
+    // Save the chunk to cache (with provider in the cache key)
     await articleService.saveAudioChunk(
       articleId,
-      voiceId,
+      cacheVoiceId,
       chunkIndex,
       result.totalChunks,
       audioBase64,
@@ -258,6 +262,7 @@ export const generateAudioChunk = endpointAuth(
       chunkIndex: result.chunkIndex,
       totalChunks: result.totalChunks,
       cached: false,
+      provider,
     }
   },
   z.object({
@@ -267,6 +272,7 @@ export const generateAudioChunk = endpointAuth(
     body: z.object({
       voiceId: z.string(),
       chunkIndex: z.number().int().min(0),
+      provider: z.enum(['elevenlabs', 'edge']).optional(),
     }),
   })
 )
@@ -287,6 +293,9 @@ export const getAudioChunkCount = endpointAuth(
 
     const totalChunks = ttsService.getChunkCount(plainText)
 
+    // Get the voice ID that has cached audio (if any)
+    const cachedVoiceId = articleService.getCachedVoiceId(article)
+
     // If voiceId is provided, return info about which chunks are already generated
     const generatedChunks = voiceId
       ? articleService.getGeneratedChunkIndices(article, voiceId)
@@ -296,6 +305,7 @@ export const getAudioChunkCount = endpointAuth(
       totalChunks,
       articleId,
       voiceId: voiceId || null,
+      cachedVoiceId, // The voice that has cached audio available
       generatedChunks,
     }
   },

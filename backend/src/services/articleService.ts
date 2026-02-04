@@ -285,7 +285,20 @@ export function getAudioChunks(article: Article, voiceId: string): AudioChunksSt
     if (data.voiceId === voiceId) {
       return data
     }
+    console.log(`[articleService] Cache voice mismatch: cached=${data.voiceId}, requested=${voiceId}`)
     return null
+  } catch {
+    return null
+  }
+}
+
+// Get the voice ID of cached audio (if any)
+export function getCachedVoiceId(article: Article): string | null {
+  if (!article.audioChunksData) return null
+
+  try {
+    const data = JSON.parse(article.audioChunksData) as AudioChunksStorage
+    return data.voiceId || null
   } catch {
     return null
   }

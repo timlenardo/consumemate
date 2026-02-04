@@ -25,6 +25,7 @@ import Markdown from 'react-native-markdown-display'
 import { colors, spacing, borderRadius } from '@/constants/theme'
 import { api, Article, Voice, WordTiming } from '@/lib/api'
 import { useAuth } from '@/lib/AuthContext'
+import { ttsService, TTSProviderType, AVSpeechProvider } from '@/lib/tts'
 
 const PLAYBACK_SPEEDS = [1.0, 1.2, 1.5, 1.7, 2.0]
 const SKIP_SECONDS = 15
@@ -69,6 +70,14 @@ export default function ArticleScreen() {
   const [previewingVoiceId, setPreviewingVoiceId] = useState<string | null>(null)
   const [playFromParagraphIndex, setPlayFromParagraphIndex] = useState<number | null>(null)
 
+  // TTS Provider state - 'elevenlabs' | 'edge' | 'avspeech'
+  type AppTTSProvider = 'elevenlabs' | 'edge' | 'avspeech'
+  const [ttsProvider, setTtsProvider] = useState<AppTTSProvider>('elevenlabs')
+  const [avSpeechVoices, setAvSpeechVoices] = useState<Voice[]>([])
+  const [selectedAvVoice, setSelectedAvVoice] = useState<Voice | null>(null)
+  const [edgeVoices, setEdgeVoices] = useState<Voice[]>([])
+  const [selectedEdgeVoice, setSelectedEdgeVoice] = useState<Voice | null>(null)
+
   // Auto-scroll states
   const [userHasScrolled, setUserHasScrolled] = useState(false)
   const [showReturnButton, setShowReturnButton] = useState(false)
@@ -81,6 +90,7 @@ export default function ArticleScreen() {
   const wordPositionsRef = useRef<Map<number, number>>(new Map())
   const isAutoScrollingRef = useRef(false)
   const lastScrollYRef = useRef(0)
+  const highlightedTextOffsetRef = useRef(0) // Y offset of the highlighted text container
 
   // Chunked audio refs
   const audioChunksRef = useRef<{ data: string; contentType: string }[]>([])
@@ -96,6 +106,8 @@ export default function ArticleScreen() {
   useEffect(() => {
     loadArticle()
     loadVoices()
+    loadAvSpeechVoices()
+    loadEdgeVoices()
 
     return () => {
       // Stop loading chunks
@@ -169,6 +181,221 @@ export default function ArticleScreen() {
     } catch (error) {
       console.error('Failed to load voices:', error)
     }
+  }
+
+  const loadAvSpeechVoices = async () => {
+    try {
+      const avProvider = ttsService.getAVSpeechProvider()
+      const avVoices = await avProvider.getVoices()
+      setAvSpeechVoices(avVoices)
+      if (avVoices.length > 0 && !selectedAvVoice) {
+        setSelectedAvVoice(avVoices[0])
+      }
+    } catch (error) {
+      console.error('Failed to load AVSpeech voices:', error)
+    }
+  }
+
+  const loadEdgeVoices = async () => {
+    try {
+      const { voices } = await api.getVoices('edge')
+      setEdgeVoices(voices)
+      if (voices.length > 0 && !selectedEdgeVoice) {
+        setSelectedEdgeVoice(voices[0])
+      }
+    } catch (error) {
+      console.error('Failed to load Edge TTS voices:', error)
+    }
+  }
+
+  // Generate audio using Edge TTS (backend, free)
+  const generateAudioWithEdge = async () => {
+    if (!article || !selectedEdgeVoice) return
+
+    setShowAudioControlModal(false)
+    setAudioLoading(true)
+    shouldStopLoadingRef.current = false
+
+    try {
+      if (soundRef.current) {
+        await soundRef.current.unloadAsync()
+        soundRef.current = null
+      }
+
+      // Reset chunk state
+      setAudioChunks([])
+      audioChunksRef.current = []
+      setCurrentChunkIndex(0)
+      setTotalChunks(0)
+      setAudioDuration(0)
+      setChunkDurations([])
+
+      // Get total chunk count
+      setChunkLoadingProgress('Preparing audio...')
+      const { totalChunks: total } = await api.getAudioChunkCount(article.id, selectedEdgeVoice.id)
+      setTotalChunks(total)
+      console.log(`[EdgeTTS] Total chunks: ${total}`)
+
+      // Generate and play chunks sequentially
+      isLoadingChunksRef.current = true
+      let allWordTimings: WordTiming[] = []
+      let cumulativeDuration = 0
+
+      for (let i = 0; i < total && !shouldStopLoadingRef.current; i++) {
+        setChunkLoadingProgress(`Loading audio ${i + 1}/${total}...`)
+        console.log(`[EdgeTTS] Generating chunk ${i + 1}/${total}`)
+
+        const chunkResult = await api.generateAudioChunk(article.id, selectedEdgeVoice.id, i, 'edge')
+
+        // Store the chunk
+        const chunkData = { data: chunkResult.audioData, contentType: chunkResult.contentType }
+        audioChunksRef.current = [...audioChunksRef.current, chunkData]
+        setAudioChunks(audioChunksRef.current)
+
+        // Accumulate word timings with offset
+        if (chunkResult.wordTimings && chunkResult.wordTimings.length > 0) {
+          const offsetTimings = chunkResult.wordTimings.map(t => ({
+            ...t,
+            start: t.start + cumulativeDuration,
+            end: t.end + cumulativeDuration,
+          }))
+          allWordTimings = [...allWordTimings, ...offsetTimings]
+          setWordTimings(allWordTimings)
+        }
+
+        // Estimate chunk duration from file size
+        const chunkBytes = chunkResult.audioData.length * 0.75
+        const chunkDurationMs = chunkBytes / 16
+        cumulativeDuration += chunkDurationMs
+        setAudioDuration(cumulativeDuration)
+        setChunkDurations(prev => [...prev, chunkDurationMs])
+
+        // Start playing immediately when first chunk is ready
+        if (i === 0) {
+          setAudioLoading(false)
+          setShowPlayerControls(true)
+          setIsPlaying(true)
+          playChunk(0, audioChunksRef.current)
+        }
+      }
+
+      isLoadingChunksRef.current = false
+      setChunkLoadingProgress('')
+      setArticle({ ...article, audioUrl: 'cached', audioVoiceId: selectedEdgeVoice.id })
+
+    } catch (error: any) {
+      console.error('[EdgeTTS] Error:', error)
+      showErrorAlert('Audio Error', error.message || 'Failed to generate audio')
+      isLoadingChunksRef.current = false
+      setChunkLoadingProgress('')
+    } finally {
+      if (isLoadingChunksRef.current === false) {
+        setAudioLoading(false)
+      }
+    }
+  }
+
+  // Generate audio using AVSpeechSynthesizer (on-device)
+  const generateAudioWithAVSpeech = async () => {
+    if (!article || !selectedAvVoice) return
+
+    setShowAudioControlModal(false)
+    setAudioLoading(true)
+    shouldStopLoadingRef.current = false
+
+    try {
+      const avProvider = ttsService.getAVSpeechProvider()
+      const text = article.contentMarkdown
+
+      // Get word timings (estimated) for display
+      const chunks: string[] = []
+      const totalChunks = avProvider.getChunkCount(text)
+      setTotalChunks(totalChunks)
+
+      let allWordTimings: WordTiming[] = []
+      let cumulativeDuration = 0
+
+      // Pre-calculate word timings for all chunks
+      for (let i = 0; i < totalChunks; i++) {
+        const chunkResult = await avProvider.generateChunk(text, selectedAvVoice.id, i)
+        // Offset word timings
+        const offsetTimings = chunkResult.wordTimings.map(t => ({
+          ...t,
+          start: t.start + cumulativeDuration,
+          end: t.end + cumulativeDuration,
+        }))
+        allWordTimings = [...allWordTimings, ...offsetTimings]
+        // Estimate chunk duration based on word count
+        const chunkDurationMs = chunkResult.wordTimings.length * 300
+        cumulativeDuration += chunkDurationMs
+      }
+
+      setWordTimings(allWordTimings)
+      setAudioDuration(cumulativeDuration)
+      setAudioLoading(false)
+      setShowPlayerControls(true)
+
+      // Start playing with AVSpeech
+      playWithAVSpeech(0)
+
+    } catch (error: any) {
+      console.error('[AVSpeech] Error:', error)
+      showErrorAlert('Audio Error', error.message || 'Failed to generate audio')
+      setAudioLoading(false)
+    }
+  }
+
+  // Play using AVSpeechSynthesizer
+  const playWithAVSpeech = async (startChunk: number = 0) => {
+    if (!article || !selectedAvVoice) return
+
+    const avProvider = ttsService.getAVSpeechProvider()
+    const text = article.contentMarkdown
+    const totalChunks = avProvider.getChunkCount(text)
+
+    setIsPlaying(true)
+    setCurrentChunkIndex(startChunk)
+
+    // Play chunks sequentially
+    const playNextChunk = async (chunkIndex: number) => {
+      if (shouldStopLoadingRef.current || chunkIndex >= totalChunks) {
+        setIsPlaying(false)
+        return
+      }
+
+      setCurrentChunkIndex(chunkIndex)
+
+      // Update position based on estimated timing
+      const estimatedPosition = chunkIndex * 500 * 300 // rough estimate
+      setAudioPosition(estimatedPosition)
+
+      try {
+        await avProvider.speakChunk(text, selectedAvVoice.id, chunkIndex, {
+          rate: playbackSpeedRef.current,
+          onDone: () => {
+            if (!shouldStopLoadingRef.current) {
+              playNextChunk(chunkIndex + 1)
+            }
+          },
+          onStopped: () => {
+            setIsPlaying(false)
+          },
+        })
+      } catch (error) {
+        console.error('[AVSpeech] Playback error:', error)
+        setIsPlaying(false)
+      }
+    }
+
+    playNextChunk(startChunk)
+  }
+
+  // Stop AVSpeech playback
+  const stopAVSpeech = () => {
+    const avProvider = ttsService.getAVSpeechProvider()
+    avProvider.stop()
+    shouldStopLoadingRef.current = true
+    setIsPlaying(false)
   }
 
   const handleMarkAsRead = async () => {
@@ -288,9 +515,11 @@ export default function ArticleScreen() {
 
       // Use ref for playback speed to ensure correct speed on chunk transitions
       const currentSpeed = playbackSpeedRef.current
+      console.log(`[Audio] Playing chunk ${chunkIndex} at speed ${currentSpeed}x`)
+
       const { sound, status: initialStatus } = await Audio.Sound.createAsync(
         { uri: `data:${chunk.contentType};base64,${chunk.data}` },
-        { shouldPlay: true, rate: currentSpeed, shouldCorrectPitch: true },
+        { shouldPlay: false }, // Don't play yet - set rate first
         (status: AVPlaybackStatus) => {
           if (status.isLoaded) {
             setIsPlaying(status.isPlaying)
@@ -314,6 +543,12 @@ export default function ArticleScreen() {
       )
 
       soundRef.current = sound
+
+      // Explicitly set rate with pitch correction BEFORE playing
+      // This ensures the rate is properly applied on chunk transitions
+      await sound.setRateAsync(currentSpeed, true)
+      await sound.playAsync()
+
       setCurrentChunkIndex(chunkIndex)
     } catch (error: any) {
       console.error('Error playing chunk:', error)
@@ -516,10 +751,27 @@ export default function ArticleScreen() {
 
     isTogglingPlaybackRef.current = true
     try {
+      // Handle AVSpeech mode
+      if (ttsProvider === 'avspeech') {
+        const avProvider = ttsService.getAVSpeechProvider()
+        if (isPlaying) {
+          avProvider.pause()
+          setIsPlaying(false)
+        } else {
+          avProvider.resume()
+          setIsPlaying(true)
+        }
+        return
+      }
+
+      // Handle ElevenLabs mode
       if (!soundRef.current) {
         await handleAudioButtonPress()
         return
       }
+
+      // Update UI immediately (optimistic update)
+      setIsPlaying(!isPlaying)
 
       if (isPlaying) {
         await soundRef.current.pauseAsync()
@@ -718,10 +970,12 @@ export default function ArticleScreen() {
       const wordY = wordPositionsRef.current.get(currentWordIndex)
       if (wordY !== undefined) {
         isAutoScrollingRef.current = true
-        // Scroll to keep current word in upper third of screen
-        const targetY = Math.max(0, wordY - SCREEN_HEIGHT / 2)
+        // Word position is relative to highlightedTextContainer, add container offset
+        const absoluteWordY = wordY + highlightedTextOffsetRef.current
+        // Scroll to center the current word on screen
+        const targetY = Math.max(0, absoluteWordY - SCREEN_HEIGHT / 2)
         scrollViewRef.current.scrollTo({ y: targetY, animated: true })
-        setCurrentWordY(wordY)
+        setCurrentWordY(absoluteWordY)
         // Reset auto-scroll flag after animation
         setTimeout(() => {
           isAutoScrollingRef.current = false
@@ -741,7 +995,8 @@ export default function ArticleScreen() {
     // If playing and user scrolls significantly, mark as manual scroll
     if (isPlaying && wordTimings.length > 0) {
       const wordY = wordPositionsRef.current.get(currentWordIndex) || 0
-      const expectedY = Math.max(0, wordY - SCREEN_HEIGHT / 2)
+      const absoluteWordY = wordY + highlightedTextOffsetRef.current
+      const expectedY = Math.max(0, absoluteWordY - SCREEN_HEIGHT / 2)
       const scrollDiff = Math.abs(scrollY - expectedY)
 
       if (scrollDiff > 100) {
@@ -757,7 +1012,8 @@ export default function ArticleScreen() {
       const wordY = wordPositionsRef.current.get(currentWordIndex)
       if (wordY !== undefined) {
         isAutoScrollingRef.current = true
-        const targetY = Math.max(0, wordY - SCREEN_HEIGHT / 2)
+        const absoluteWordY = wordY + highlightedTextOffsetRef.current
+        const targetY = Math.max(0, absoluteWordY - SCREEN_HEIGHT / 2)
         scrollViewRef.current.scrollTo({ y: targetY, animated: true })
         setTimeout(() => {
           isAutoScrollingRef.current = false
@@ -781,7 +1037,13 @@ export default function ArticleScreen() {
     if (!wordTimings.length) return null
 
     return (
-      <View style={styles.highlightedTextContainer}>
+      <View
+        style={styles.highlightedTextContainer}
+        onLayout={(event) => {
+          // Store the Y offset of this container relative to scroll content
+          highlightedTextOffsetRef.current = event.nativeEvent.layout.y
+        }}
+      >
         {wordTimings.map((timing, index) => {
           const isCurrentWord = index === currentWordIndex
           const isReadWord = index < currentWordIndex
@@ -1022,41 +1284,190 @@ export default function ArticleScreen() {
               Listen to Article
             </Text>
 
-            {/* Current Voice Selection */}
-            <TouchableOpacity
-              style={[styles.voiceSelector, { backgroundColor: theme.background, borderColor: theme.border }]}
-              onPress={() => {
-                setShowAudioControlModal(false)
-                setShowVoiceSelectionModal(true)
-              }}
-            >
-              <View>
-                <Text style={[styles.voiceSelectorLabel, { color: theme.textMuted }]}>Voice</Text>
-                <Text style={[styles.voiceSelectorValue, { color: theme.text }]}>
-                  {selectedVoice?.name || 'Select a voice'}
+            {/* TTS Provider Selection */}
+            <View style={styles.providerSelector}>
+              <TouchableOpacity
+                style={[
+                  styles.providerOption,
+                  { borderColor: theme.border },
+                  ttsProvider === 'elevenlabs' && { borderColor: theme.primary, backgroundColor: theme.primary + '15' }
+                ]}
+                onPress={() => setTtsProvider('elevenlabs')}
+              >
+                <Ionicons
+                  name="star"
+                  size={18}
+                  color={ttsProvider === 'elevenlabs' ? theme.primary : theme.textMuted}
+                />
+                <Text style={[
+                  styles.providerOptionText,
+                  { color: ttsProvider === 'elevenlabs' ? theme.primary : theme.text }
+                ]}>
+                  ElevenLabs
                 </Text>
+                <Text style={[styles.providerOptionSubtext, { color: theme.textMuted }]}>
+                  Best quality
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.providerOption,
+                  { borderColor: theme.border },
+                  ttsProvider === 'edge' && { borderColor: theme.primary, backgroundColor: theme.primary + '15' }
+                ]}
+                onPress={() => setTtsProvider('edge')}
+              >
+                <Ionicons
+                  name="cloud"
+                  size={18}
+                  color={ttsProvider === 'edge' ? theme.primary : theme.textMuted}
+                />
+                <Text style={[
+                  styles.providerOptionText,
+                  { color: ttsProvider === 'edge' ? theme.primary : theme.text }
+                ]}>
+                  Edge
+                </Text>
+                <Text style={[styles.providerOptionSubtext, { color: theme.textMuted }]}>
+                  Free & good
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.providerOption,
+                  { borderColor: theme.border },
+                  ttsProvider === 'avspeech' && { borderColor: theme.primary, backgroundColor: theme.primary + '15' }
+                ]}
+                onPress={() => setTtsProvider('avspeech')}
+              >
+                <Ionicons
+                  name="phone-portrait"
+                  size={18}
+                  color={ttsProvider === 'avspeech' ? theme.primary : theme.textMuted}
+                />
+                <Text style={[
+                  styles.providerOptionText,
+                  { color: ttsProvider === 'avspeech' ? theme.primary : theme.text }
+                ]}>
+                  On-Device
+                </Text>
+                <Text style={[styles.providerOptionSubtext, { color: theme.textMuted }]}>
+                  Offline
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Voice Selection - different for each provider */}
+            {ttsProvider === 'elevenlabs' && (
+              <TouchableOpacity
+                style={[styles.voiceSelector, { backgroundColor: theme.background, borderColor: theme.border }]}
+                onPress={() => {
+                  setShowAudioControlModal(false)
+                  setShowVoiceSelectionModal(true)
+                }}
+              >
+                <View>
+                  <Text style={[styles.voiceSelectorLabel, { color: theme.textMuted }]}>Voice</Text>
+                  <Text style={[styles.voiceSelectorValue, { color: theme.text }]}>
+                    {selectedVoice?.name || 'Select a voice'}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={theme.textMuted} />
+              </TouchableOpacity>
+            )}
+
+            {ttsProvider === 'edge' && (
+              <View style={[styles.voiceSelector, { backgroundColor: theme.background, borderColor: theme.border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.voiceSelectorLabel, { color: theme.textMuted }]}>Voice</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+                    {edgeVoices.map(voice => (
+                      <TouchableOpacity
+                        key={voice.id}
+                        style={[
+                          styles.avVoiceChip,
+                          { borderColor: theme.border },
+                          selectedEdgeVoice?.id === voice.id && { borderColor: theme.primary, backgroundColor: theme.primary + '15' }
+                        ]}
+                        onPress={() => setSelectedEdgeVoice(voice)}
+                      >
+                        <Text style={[
+                          styles.avVoiceChipText,
+                          { color: selectedEdgeVoice?.id === voice.id ? theme.primary : theme.text }
+                        ]}>
+                          {voice.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
               </View>
-              <Ionicons name="chevron-forward" size={20} color={theme.textMuted} />
-            </TouchableOpacity>
+            )}
+
+            {ttsProvider === 'avspeech' && (
+              <View style={[styles.voiceSelector, { backgroundColor: theme.background, borderColor: theme.border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.voiceSelectorLabel, { color: theme.textMuted }]}>Voice</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+                    {avSpeechVoices.slice(0, 5).map(voice => (
+                      <TouchableOpacity
+                        key={voice.id}
+                        style={[
+                          styles.avVoiceChip,
+                          { borderColor: theme.border },
+                          selectedAvVoice?.id === voice.id && { borderColor: theme.primary, backgroundColor: theme.primary + '15' }
+                        ]}
+                        onPress={() => setSelectedAvVoice(voice)}
+                      >
+                        <Text style={[
+                          styles.avVoiceChipText,
+                          { color: selectedAvVoice?.id === voice.id ? theme.primary : theme.text }
+                        ]}>
+                          {voice.name.split(' ')[0]}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              </View>
+            )}
 
             {/* Transcribe Button */}
             <TouchableOpacity
               style={[styles.transcribeButton, { backgroundColor: theme.primary }]}
-              onPress={generateAudio}
+              onPress={() => {
+                if (ttsProvider === 'elevenlabs') generateAudio()
+                else if (ttsProvider === 'edge') generateAudioWithEdge()
+                else generateAudioWithAVSpeech()
+              }}
               disabled={audioLoading}
             >
               {audioLoading ? (
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
                 <>
-                  <Ionicons name="mic" size={24} color="#fff" />
-                  <Text style={styles.transcribeButtonText}>Transcribe Now</Text>
+                  <Ionicons
+                    name={ttsProvider === 'elevenlabs' ? 'star' : ttsProvider === 'edge' ? 'cloud' : 'volume-high'}
+                    size={24}
+                    color="#fff"
+                  />
+                  <Text style={styles.transcribeButtonText}>
+                    {ttsProvider === 'elevenlabs' ? 'Generate with ElevenLabs' :
+                     ttsProvider === 'edge' ? 'Generate with Edge TTS' :
+                     'Play with On-Device Voice'}
+                  </Text>
                 </>
               )}
             </TouchableOpacity>
 
             <Text style={[styles.transcribeNote, { color: theme.textMuted }]}>
-              This will convert the article to audio using AI voice synthesis
+              {ttsProvider === 'elevenlabs'
+                ? 'Best quality AI voices (uses API quota)'
+                : ttsProvider === 'edge'
+                ? 'Good quality Microsoft voices - free & unlimited'
+                : 'Basic iOS voices - free and works offline'}
             </Text>
           </Animated.View>
         </View>
@@ -1239,6 +1650,11 @@ export default function ArticleScreen() {
                 // Stop loading more chunks
                 shouldStopLoadingRef.current = true
                 isLoadingChunksRef.current = false
+
+                // Stop AVSpeech if active
+                if (ttsProvider === 'avspeech') {
+                  stopAVSpeech()
+                }
 
                 if (soundRef.current) {
                   await soundRef.current.stopAsync()
@@ -1513,6 +1929,40 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
     marginBottom: spacing.lg,
+  },
+  providerSelector: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  providerOption: {
+    flex: 1,
+    padding: spacing.md,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  providerOptionText: {
+    fontSize: 14,
+    fontFamily: 'Georgia',
+    fontWeight: '600',
+  },
+  providerOptionSubtext: {
+    fontSize: 11,
+    fontFamily: 'Georgia',
+  },
+  avVoiceChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    marginRight: spacing.sm,
+  },
+  avVoiceChipText: {
+    fontSize: 13,
+    fontFamily: 'Georgia',
+    fontWeight: '500',
   },
   voiceSelector: {
     flexDirection: 'row',
