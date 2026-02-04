@@ -1,6 +1,19 @@
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js'
-import { tts as edgeTts, getVoices as getEdgeVoices } from 'edge-tts'
 import { env } from '@config/env'
+
+// Edge TTS uses ESM, so we need to dynamically import it
+let edgeTts: ((text: string, options: { voice: string }) => Promise<Buffer>) | null = null
+let getEdgeVoices: (() => Promise<any[]>) | null = null
+
+async function loadEdgeTts() {
+  if (!edgeTts) {
+    // Dynamic import for ESM module
+    const edgeTtsModule = await import('edge-tts/out/index.js')
+    edgeTts = edgeTtsModule.tts
+    getEdgeVoices = edgeTtsModule.getVoices
+  }
+  return { edgeTts: edgeTts!, getEdgeVoices: getEdgeVoices! }
+}
 
 // Word timing for text-audio sync
 export interface WordTiming {
@@ -519,6 +532,7 @@ class EdgeTTSProvider implements TTSProvider {
     const cleanedText = this.prepareTextForSpeech(text)
     console.log(`[EdgeTTS] Generating speech for ${cleanedText.length} chars with voice ${voiceId}`)
 
+    const { edgeTts } = await loadEdgeTts()
     const audioBuffer = await edgeTts(cleanedText, { voice: voiceId })
 
     // Estimate duration: Edge TTS outputs ~128kbps MP3
@@ -540,6 +554,7 @@ class EdgeTTSProvider implements TTSProvider {
       return this.cachedVoices
     }
 
+    const { getEdgeVoices } = await loadEdgeTts()
     const allVoices = await getEdgeVoices()
 
     // Filter to high-quality English voices
@@ -595,6 +610,7 @@ class EdgeTTSProvider implements TTSProvider {
     const chunkText = chunks[chunkIndex]
     console.log(`[EdgeTTS] Generating chunk ${chunkIndex + 1}/${totalChunks} (${chunkText.length} chars)`)
 
+    const { edgeTts } = await loadEdgeTts()
     const audioBuffer = await edgeTts(chunkText, { voice: voiceId })
 
     // Estimate duration and generate word timings
