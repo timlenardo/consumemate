@@ -13,6 +13,7 @@
     "migration:revert": "npm run typeorm migration:revert"
   },
   "dependencies": {
+    "@bestcodes/edge-tts": "^3.0.1",
     "@elevenlabs/elevenlabs-js": "^2.32.0",
     "@mozilla/readability": "^0.5.0",
     "bcrypt": "^5.1.1",
