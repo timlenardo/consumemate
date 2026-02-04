@@ -84,12 +84,29 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${this.token}`
     }
 
+    console.log(`[API] ${options.method || 'GET'} ${endpoint}`)
+
     const response = await fetch(`${API_URL}${endpoint}`, {
       ...options,
       headers,
     })
 
-    const data = await response.json()
+    const text = await response.text()
+    console.log(`[API] Response status: ${response.status}, length: ${text.length}`)
+
+    // Log first 500 chars of response for debugging
+    if (text.length > 0) {
+      console.log(`[API] Response preview: ${text.substring(0, 500)}`)
+    }
+
+    let data: any
+    try {
+      data = JSON.parse(text)
+    } catch (e) {
+      console.error(`[API] JSON parse error for ${endpoint}:`, e)
+      console.error(`[API] Raw response: ${text.substring(0, 1000)}`)
+      throw new Error(`Invalid JSON response from server: ${text.substring(0, 100)}`)
+    }
 
     if (!response.ok) {
       if (response.status === 401) {

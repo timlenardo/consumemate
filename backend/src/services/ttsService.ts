@@ -77,7 +77,7 @@ class Semaphore {
 // ElevenLabs implementation
 class ElevenLabsTTSProvider implements TTSProvider {
   private client: ElevenLabsClient
-  private readonly MAX_CHUNK_CHARS = 1000  // Smaller chunks to avoid Heroku 30s timeout
+  private readonly MAX_CHUNK_CHARS = 2500  // Larger chunks = fewer API calls = faster total processing
   // When true, limits to ~100 words to conserve API quota (for local development)
   private readonly TEST_MODE = env.ttsTestMode
   private readonly TEST_MODE_WORD_LIMIT = 100
