@@ -25,7 +25,7 @@ import Markdown from 'react-native-markdown-display'
 import { colors, spacing, borderRadius } from '@/constants/theme'
 import { api, Article, Voice, WordTiming } from '@/lib/api'
 import { useAuth } from '@/lib/AuthContext'
-import { ttsService, TTSProviderType, AVSpeechProvider } from '@/lib/tts'
+import { ttsService, TTSProviderType, AVSpeechProvider, EdgeTTSProvider } from '@/lib/tts'
 
 const PLAYBACK_SPEEDS = [1.0, 1.2, 1.5, 1.7, 2.0]
 const SKIP_SECONDS = 15
@@ -198,7 +198,9 @@ export default function ArticleScreen() {
 
   const loadEdgeVoices = async () => {
     try {
-      const { voices } = await api.getVoices('edge')
+      // Use client-side Edge TTS provider to load voices
+      const edgeProvider = ttsService.getEdgeTTSProvider()
+      const voices = await edgeProvider.getVoices()
       setEdgeVoices(voices)
       if (voices.length > 0 && !selectedEdgeVoice) {
         setSelectedEdgeVoice(voices[0])
@@ -208,7 +210,7 @@ export default function ArticleScreen() {
     }
   }
 
-  // Generate audio using Edge TTS (backend, free)
+  // Generate audio using Edge TTS (client-side, free)
   const generateAudioWithEdge = async () => {
     if (!article || !selectedEdgeVoice) return
 
@@ -230,11 +232,15 @@ export default function ArticleScreen() {
       setAudioDuration(0)
       setChunkDurations([])
 
+      // Use client-side Edge TTS provider
+      const edgeProvider = ttsService.getEdgeTTSProvider()
+      const text = article.contentMarkdown
+
       // Get total chunk count
       setChunkLoadingProgress('Preparing audio...')
-      const { totalChunks: total } = await api.getAudioChunkCount(article.id, selectedEdgeVoice.id)
+      const total = edgeProvider.getChunkCount(text)
       setTotalChunks(total)
-      console.log(`[EdgeTTS] Total chunks: ${total}`)
+      console.log(`[EdgeTTS Client] Total chunks: ${total}`)
 
       // Generate and play chunks sequentially
       isLoadingChunksRef.current = true
@@ -242,10 +248,11 @@ export default function ArticleScreen() {
       let cumulativeDuration = 0
 
       for (let i = 0; i < total && !shouldStopLoadingRef.current; i++) {
-        setChunkLoadingProgress(`Loading audio ${i + 1}/${total}...`)
-        console.log(`[EdgeTTS] Generating chunk ${i + 1}/${total}`)
+        setChunkLoadingProgress(`Generating audio ${i + 1}/${total}...`)
+        console.log(`[EdgeTTS Client] Generating chunk ${i + 1}/${total}`)
 
-        const chunkResult = await api.generateAudioChunk(article.id, selectedEdgeVoice.id, i, 'edge')
+        // Generate chunk using client-side Edge TTS
+        const chunkResult = await edgeProvider.generateChunk(text, selectedEdgeVoice.id, i)
 
         // Store the chunk
         const chunkData = { data: chunkResult.audioData, contentType: chunkResult.contentType }
@@ -284,7 +291,7 @@ export default function ArticleScreen() {
       setArticle({ ...article, audioUrl: 'cached', audioVoiceId: selectedEdgeVoice.id })
 
     } catch (error: any) {
-      console.error('[EdgeTTS] Error:', error)
+      console.error('[EdgeTTS Client] Error:', error)
       showErrorAlert('Audio Error', error.message || 'Failed to generate audio')
       isLoadingChunksRef.current = false
       setChunkLoadingProgress('')

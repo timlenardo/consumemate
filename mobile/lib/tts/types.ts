@@ -11,7 +11,7 @@ export interface Voice {
   name: string
   previewUrl?: string
   category?: string
-  provider: 'elevenlabs' | 'avspeech' | string
+  provider: 'elevenlabs' | 'avspeech' | 'edge' | string
 }
 
 export interface TTSChunkResult {
