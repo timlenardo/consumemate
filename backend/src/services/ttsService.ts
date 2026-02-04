@@ -16,8 +16,8 @@ async function loadEdgeTts(): Promise<EdgeTTSModule> {
   }
   if (!edgeTtsModule) {
     try {
-      // Dynamic import for ESM module - this may fail in CommonJS context
-      const module = await (eval('import("@bestcodes/edge-tts")') as Promise<any>)
+      // Dynamic import for ESM module - explicitly import the .mjs file
+      const module = await (eval('import("@bestcodes/edge-tts/dist/index.mjs")') as Promise<any>)
       edgeTtsModule = {
         generateSpeech: module.generateSpeech,
         getVoices: module.getVoices,
