@@ -248,14 +248,34 @@ export default function ArticleScreen() {
 
   // Play a specific chunk
   const playChunk = async (chunkIndex: number, chunks: { data: string; contentType: string }[]) => {
-    if (chunkIndex >= chunks.length) {
-      // All chunks played
-      setIsPlaying(false)
+    const chunk = chunks[chunkIndex]
+
+    // If chunk not ready yet but still loading, wait for it
+    if (!chunk && isLoadingChunksRef.current && chunkIndex < totalChunks) {
+      console.log(`[Audio] Waiting for chunk ${chunkIndex} to load...`)
+      // Poll until chunk is ready
+      const waitForChunk = () => {
+        setTimeout(() => {
+          const loadedChunk = audioChunksRef.current[chunkIndex]
+          if (loadedChunk) {
+            playChunk(chunkIndex, audioChunksRef.current)
+          } else if (isLoadingChunksRef.current) {
+            waitForChunk() // Keep waiting
+          } else {
+            // Loading stopped and chunk not available - we're done
+            setIsPlaying(false)
+          }
+        }, 200)
+      }
+      waitForChunk()
       return
     }
 
-    const chunk = chunks[chunkIndex]
-    if (!chunk) return
+    // No more chunks - we're done
+    if (!chunk) {
+      setIsPlaying(false)
+      return
+    }
 
     try {
       if (soundRef.current) {
@@ -355,12 +375,12 @@ export default function ArticleScreen() {
         cumulativeDuration += chunkDurationMs
         setAudioDuration(cumulativeDuration)
 
-        // Start playing immediately when first chunk is ready
+        // Start playing immediately when first chunk is ready (don't await - let loading continue)
         if (i === 0) {
           setAudioLoading(false)
           setShowPlayerControls(true)
           setIsPlaying(true)
-          await playChunk(0, audioChunksRef.current)
+          playChunk(0, audioChunksRef.current) // Don't await - continue loading more chunks
         }
 
         console.log(`[Audio] Chunk ${i + 1} ready, cumulative duration: ${Math.round(cumulativeDuration / 1000)}s`)
