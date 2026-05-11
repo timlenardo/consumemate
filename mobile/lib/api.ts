@@ -56,6 +56,29 @@ export interface WordTiming {
   end: number    // end time in milliseconds
 }
 
+export interface ResolvedShow {
+  title: string
+  author: string | null
+  feedUrl: string
+  artworkUrl: string | null
+}
+
+export interface ResolvedEpisode {
+  title: string
+  audioUrl: string
+  durationSeconds: number | null
+  pubDate: string | null
+  guid: string
+  description: string | null
+}
+
+export interface ResolvedPodcast {
+  source: 'spotify' | 'apple' | 'rss'
+  type: 'episode' | 'show'
+  show: ResolvedShow
+  episode: ResolvedEpisode | null
+}
+
 class ApiClient {
   private token: string | null = null
 
@@ -241,6 +264,14 @@ class ApiClient {
     providers: { provider: TTSProvider; voices: Voice[] }[]
   }> {
     return this.request('/voices/all')
+  }
+
+  // Podcasts
+  async resolvePodcast(url: string): Promise<ResolvedPodcast> {
+    return this.request('/v1/podcasts/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    })
   }
 
   // Public

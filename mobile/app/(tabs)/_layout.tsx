@@ -28,18 +28,18 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Unread',
+          title: 'Library',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="book-outline" size={size} color={color} />
           ),
         }}
       />
       <Tabs.Screen
-        name="read"
+        name="add"
         options={{
-          title: 'Read',
+          title: 'Add',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="checkmark-done-outline" size={size} color={color} />
+            <Ionicons name="add-circle-outline" size={size + 4} color={color} />
           ),
         }}
       />

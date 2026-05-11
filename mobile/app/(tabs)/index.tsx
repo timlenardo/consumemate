@@ -8,23 +8,32 @@ import {
   useColorScheme,
   RefreshControl,
   Image,
+  ScrollView,
 } from 'react-native'
 import { useFocusEffect, router } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
 import { colors, spacing, borderRadius } from '@/constants/theme'
 import { api, ArticleSummary } from '@/lib/api'
 
-export default function UnreadScreen() {
+type Filter = 'unread' | 'read' | 'all'
+const FILTERS: { value: Filter; label: string }[] = [
+  { value: 'unread', label: 'Unread' },
+  { value: 'read', label: 'Read' },
+  { value: 'all', label: 'All' },
+]
+
+export default function LibraryScreen() {
   const colorScheme = useColorScheme()
   const theme = colors[colorScheme ?? 'light']
 
+  const [filter, setFilter] = useState<Filter>('unread')
   const [articles, setArticles] = useState<ArticleSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
 
-  const loadArticles = useCallback(async () => {
+  const loadArticles = useCallback(async (f: Filter) => {
     try {
-      const data = await api.getArticles('unread')
+      const data = await api.getArticles(f)
       setArticles(data)
     } catch (error) {
       console.error('Failed to load articles:', error)
@@ -36,13 +45,14 @@ export default function UnreadScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      loadArticles()
-    }, [loadArticles])
+      setLoading(true)
+      loadArticles(filter)
+    }, [loadArticles, filter])
   )
 
   const handleRefresh = () => {
     setRefreshing(true)
-    loadArticles()
+    loadArticles(filter)
   }
 
   const renderItem = ({ item }: { item: ArticleSummary }) => (
@@ -77,51 +87,112 @@ export default function UnreadScreen() {
     </TouchableOpacity>
   )
 
-  if (loading) {
-    return (
-      <View style={[styles.centered, { backgroundColor: theme.background }]}>
-        <Text style={[styles.emptyText, { color: theme.textSecondary }]}>Loading...</Text>
-      </View>
-    )
-  }
+  const renderFilterChips = () => (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.chipsRow}
+      contentContainerStyle={styles.chipsContent}
+    >
+      {FILTERS.map(({ value, label }) => {
+        const active = filter === value
+        return (
+          <TouchableOpacity
+            key={value}
+            onPress={() => setFilter(value)}
+            style={[
+              styles.chip,
+              {
+                backgroundColor: active ? theme.primary : theme.surface,
+                borderColor: active ? theme.primary : theme.border,
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.chipText,
+                { color: active ? '#fff' : theme.textSecondary },
+              ]}
+            >
+              {label}
+            </Text>
+          </TouchableOpacity>
+        )
+      })}
+    </ScrollView>
+  )
 
-  if (articles.length === 0) {
-    return (
-      <View style={[styles.centered, { backgroundColor: theme.background }]}>
-        <Ionicons name="book-outline" size={64} color={theme.textMuted} />
-        <Text style={[styles.emptyTitle, { color: theme.text }]}>No unread articles</Text>
-        <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
-          Save articles using the Chrome extension
-        </Text>
-      </View>
-    )
-  }
+  const emptyMessage = filter === 'read'
+    ? 'No read articles yet'
+    : filter === 'unread'
+    ? 'No unread articles'
+    : 'Your library is empty'
 
   return (
-    <FlatList
-      style={[styles.list, { backgroundColor: theme.background }]}
-      contentContainerStyle={styles.listContent}
-      data={articles}
-      keyExtractor={(item) => item.id.toString()}
-      renderItem={renderItem}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={handleRefresh}
-          tintColor={theme.primary}
+    <View style={[styles.container, { backgroundColor: theme.background }]}>
+      {renderFilterChips()}
+      {loading ? (
+        <View style={styles.centered}>
+          <Text style={[styles.emptyText, { color: theme.textSecondary }]}>Loading...</Text>
+        </View>
+      ) : articles.length === 0 ? (
+        <View style={styles.centered}>
+          <Ionicons name="book-outline" size={64} color={theme.textMuted} />
+          <Text style={[styles.emptyTitle, { color: theme.text }]}>{emptyMessage}</Text>
+          <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
+            Tap Add to save a podcast or article
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
+          data={articles}
+          keyExtractor={(item) => item.id.toString()}
+          renderItem={renderItem}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor={theme.primary}
+            />
+          }
         />
-      }
-    />
+      )}
+    </View>
   )
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
   list: {
     flex: 1,
   },
   listContent: {
     padding: spacing.md,
     gap: spacing.md,
+  },
+  chipsRow: {
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  chipsContent: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    gap: spacing.sm,
+  },
+  chip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: borderRadius.full,
+    borderWidth: 1,
+  },
+  chipText: {
+    fontSize: 14,
+    fontFamily: 'Georgia',
+    fontWeight: '600',
   },
   centered: {
     flex: 1,
