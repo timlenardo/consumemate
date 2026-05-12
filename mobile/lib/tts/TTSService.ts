@@ -3,6 +3,7 @@
 import { ElevenLabsProvider } from './ElevenLabsProvider'
 import { AVSpeechProvider } from './AVSpeechProvider'
 import { EdgeTTSProvider } from './EdgeTTSProvider'
+import { KokoroProvider } from './KokoroProvider'
 import type {
   TTSProvider,
   TTSProviderInfo,
@@ -11,7 +12,7 @@ import type {
   TTSChunkResult,
 } from './types'
 
-export type TTSProviderType = 'elevenlabs' | 'avspeech' | 'edge'
+export type TTSProviderType = 'elevenlabs' | 'avspeech' | 'edge' | 'kokoro'
 
 class TTSService {
   private providers: Map<TTSProviderType, TTSProvider> = new Map()
@@ -23,6 +24,7 @@ class TTSService {
     this.providers.set('elevenlabs', new ElevenLabsProvider())
     this.providers.set('avspeech', new AVSpeechProvider())
     this.providers.set('edge', new EdgeTTSProvider())
+    this.providers.set('kokoro', new KokoroProvider())
   }
 
   // Get list of all available providers
@@ -60,6 +62,11 @@ class TTSService {
     return this.providers.get('edge') as EdgeTTSProvider
   }
 
+  // Get the Kokoro TTS provider (typed)
+  getKokoroProvider(): KokoroProvider {
+    return this.providers.get('kokoro') as KokoroProvider
+  }
+
   // Set the active provider
   setProvider(type: TTSProviderType): void {
     if (!this.providers.has(type)) {
@@ -82,7 +89,7 @@ class TTSService {
   // Get all voices from all providers
   async getAllVoices(): Promise<Voice[]> {
     const allVoices: Voice[] = []
-    const providerTypes: TTSProviderType[] = ['elevenlabs', 'avspeech', 'edge']
+    const providerTypes: TTSProviderType[] = ['elevenlabs', 'avspeech', 'edge', 'kokoro']
 
     for (const type of providerTypes) {
       const provider = this.providers.get(type)

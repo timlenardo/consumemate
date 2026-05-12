@@ -23,13 +23,28 @@ import ViewShot from 'react-native-view-shot'
 import * as Sharing from 'expo-sharing'
 import Markdown from 'react-native-markdown-display'
 import { colors, spacing, borderRadius } from '@/constants/theme'
+
+// Send debug info to dev server so it can be read without copy/paste
+const sendDebug = (message: string, data: any = {}) => {
+  console.log(`[Debug] ${message}`, data)
+  fetch('http://localhost:8765/debug', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, data }),
+  }).catch(() => {}) // Ignore errors
+}
 import { api, Article, Voice, WordTiming } from '@/lib/api'
 import { useAuth } from '@/lib/AuthContext'
-import { ttsService, TTSProviderType, AVSpeechProvider, EdgeTTSProvider } from '@/lib/tts'
+import { ttsService, TTSProviderType, AVSpeechProvider, EdgeTTSProvider, KokoroProvider } from '@/lib/tts'
 
 const PLAYBACK_SPEEDS = [1.0, 1.2, 1.5, 1.7, 2.0]
 const SKIP_SECONDS = 15
 const { height: SCREEN_HEIGHT } = Dimensions.get('window')
+
+// Auto-scroll centering constants - account for header and player controls
+const TOP_INSET = 100 // Status bar + navigation
+const BOTTOM_INSET = 160 // Player controls
+const VISIBLE_CENTER = (SCREEN_HEIGHT - TOP_INSET - BOTTOM_INSET) / 2 + TOP_INSET
 
 // Helper to show error alert
 function showErrorAlert(title: string, message: string) {
@@ -62,6 +77,7 @@ export default function ArticleScreen() {
   const [totalChunks, setTotalChunks] = useState(0)
   const [chunkLoadingProgress, setChunkLoadingProgress] = useState('')
   const [chunkDurations, setChunkDurations] = useState<number[]>([]) // Debug: track each chunk's duration
+  const [debugInfo, setDebugInfo] = useState<string>('')  // Debug info to display in UI
 
   // New modal states
   const [showVoiceSelectionModal, setShowVoiceSelectionModal] = useState(false)
@@ -70,13 +86,18 @@ export default function ArticleScreen() {
   const [previewingVoiceId, setPreviewingVoiceId] = useState<string | null>(null)
   const [playFromParagraphIndex, setPlayFromParagraphIndex] = useState<number | null>(null)
 
-  // TTS Provider state - 'elevenlabs' | 'edge' | 'avspeech'
-  type AppTTSProvider = 'elevenlabs' | 'edge' | 'avspeech'
+  // TTS Provider state - 'elevenlabs' | 'edge' | 'avspeech' | 'kokoro'
+  type AppTTSProvider = 'elevenlabs' | 'edge' | 'avspeech' | 'kokoro'
   const [ttsProvider, setTtsProvider] = useState<AppTTSProvider>('elevenlabs')
   const [avSpeechVoices, setAvSpeechVoices] = useState<Voice[]>([])
   const [selectedAvVoice, setSelectedAvVoice] = useState<Voice | null>(null)
   const [edgeVoices, setEdgeVoices] = useState<Voice[]>([])
   const [selectedEdgeVoice, setSelectedEdgeVoice] = useState<Voice | null>(null)
+  const [kokoroVoices, setKokoroVoices] = useState<Voice[]>([])
+  const [selectedKokoroVoice, setSelectedKokoroVoice] = useState<Voice | null>(null)
+  const [kokoroAvailable, setKokoroAvailable] = useState(false)
+  const [kokoroModelStatus, setKokoroModelStatus] = useState<{ isDownloaded: boolean; isLoaded: boolean }>({ isDownloaded: false, isLoaded: false })
+  const [kokoroDownloadProgress, setKokoroDownloadProgress] = useState<number | null>(null)
 
   // Auto-scroll states
   const [userHasScrolled, setUserHasScrolled] = useState(false)
@@ -90,7 +111,8 @@ export default function ArticleScreen() {
   const wordPositionsRef = useRef<Map<number, number>>(new Map())
   const isAutoScrollingRef = useRef(false)
   const lastScrollYRef = useRef(0)
-  const highlightedTextOffsetRef = useRef(0) // Y offset of the highlighted text container
+  const highlightedTextOffsetRef = useRef(0) // Y offset of the highlighted text container relative to articleBody
+  const articleBodyOffsetRef = useRef(0) // Y offset of articleBody relative to scroll content
 
   // Chunked audio refs
   const audioChunksRef = useRef<{ data: string; contentType: string }[]>([])
@@ -98,16 +120,36 @@ export default function ArticleScreen() {
   const shouldStopLoadingRef = useRef(false)
   const playbackSpeedRef = useRef(1.0) // Track current speed for chunk transitions
   const isTogglingPlaybackRef = useRef(false) // Prevent race conditions on play/pause
+  const chunkDurationsRef = useRef<number[]>([]) // Store durations for consistent position calculation
 
   // Animation values for half-modal
   const overlayOpacity = useRef(new Animated.Value(0)).current
   const modalSlideY = useRef(new Animated.Value(300)).current
+
+  // Configure audio session for background playback
+  useEffect(() => {
+    const configureAudio = async () => {
+      try {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          staysActiveInBackground: true,
+          playsInSilentModeIOS: true,
+          shouldDuckAndroid: true,
+          playThroughEarpieceAndroid: false,
+        })
+      } catch (error) {
+        console.error('Failed to configure audio mode:', error)
+      }
+    }
+    configureAudio()
+  }, [])
 
   useEffect(() => {
     loadArticle()
     loadVoices()
     loadAvSpeechVoices()
     loadEdgeVoices()
+    loadKokoroVoices()
 
     return () => {
       // Stop loading chunks
@@ -210,6 +252,28 @@ export default function ArticleScreen() {
     }
   }
 
+  const loadKokoroVoices = async () => {
+    try {
+      const kokoroProvider = ttsService.getKokoroProvider()
+      const available = await kokoroProvider.isAvailable()
+      setKokoroAvailable(available)
+
+      if (available) {
+        const voices = await kokoroProvider.getVoices()
+        setKokoroVoices(voices)
+        if (voices.length > 0 && !selectedKokoroVoice) {
+          setSelectedKokoroVoice(voices[0])
+        }
+
+        // Check model status
+        const status = await kokoroProvider.getModelStatus()
+        setKokoroModelStatus({ isDownloaded: status.isDownloaded, isLoaded: status.isLoaded })
+      }
+    } catch (error) {
+      console.error('Failed to load Kokoro TTS voices:', error)
+    }
+  }
+
   // Generate audio using Edge TTS (client-side, free)
   const generateAudioWithEdge = async () => {
     if (!article || !selectedEdgeVoice) return
@@ -227,10 +291,13 @@ export default function ArticleScreen() {
       // Reset chunk state
       setAudioChunks([])
       audioChunksRef.current = []
+      chunkDurationsRef.current = []
       setCurrentChunkIndex(0)
       setTotalChunks(0)
       setAudioDuration(0)
+      setAudioPosition(0)
       setChunkDurations([])
+      setWordTimings([])
 
       // Use client-side Edge TTS provider
       const edgeProvider = ttsService.getEdgeTTSProvider()
@@ -270,10 +337,11 @@ export default function ArticleScreen() {
           setWordTimings(allWordTimings)
         }
 
-        // Estimate chunk duration from file size
+        // Estimate chunk duration from file size (MP3 ~16 bytes/ms)
         const chunkBytes = chunkResult.audioData.length * 0.75
         const chunkDurationMs = chunkBytes / 16
         cumulativeDuration += chunkDurationMs
+        chunkDurationsRef.current = [...chunkDurationsRef.current, chunkDurationMs]
         setAudioDuration(cumulativeDuration)
         setChunkDurations(prev => [...prev, chunkDurationMs])
 
@@ -349,6 +417,140 @@ export default function ArticleScreen() {
       console.error('[AVSpeech] Error:', error)
       showErrorAlert('Audio Error', error.message || 'Failed to generate audio')
       setAudioLoading(false)
+    }
+  }
+
+  // Generate audio using Kokoro TTS (on-device AI)
+  const generateAudioWithKokoro = async () => {
+    if (!article || !selectedKokoroVoice) return
+
+    setShowAudioControlModal(false)
+    setAudioLoading(true)
+    shouldStopLoadingRef.current = false
+
+    try {
+      const kokoroProvider = ttsService.getKokoroProvider()
+
+      // Check if model needs to be downloaded/loaded
+      const status = await kokoroProvider.getModelStatus()
+      if (!status.isDownloaded) {
+        setKokoroDownloadProgress(0)
+        await kokoroProvider.downloadModel((progress) => {
+          setKokoroDownloadProgress(progress)
+        })
+        setKokoroDownloadProgress(null)
+      }
+
+      if (!status.isLoaded) {
+        setChunkLoadingProgress('Loading AI model...')
+        await kokoroProvider.loadModel()
+      }
+
+      if (soundRef.current) {
+        await soundRef.current.unloadAsync()
+        soundRef.current = null
+      }
+
+      // Reset chunk state
+      setAudioChunks([])
+      audioChunksRef.current = []
+      chunkDurationsRef.current = []
+      setCurrentChunkIndex(0)
+      setTotalChunks(0)
+      setAudioDuration(0)
+      setAudioPosition(0)
+      setChunkDurations([])
+      setWordTimings([])
+
+      const text = article.contentMarkdown
+      console.log(`[Kokoro] Article title: "${article.title}"`)
+      console.log(`[Kokoro] Article text length: ${text.length} chars`)
+      console.log(`[Kokoro] Article text starts with: "${text.substring(0, 150).replace(/\n/g, '\\n')}..."`)
+
+      // Get total chunk count
+      setChunkLoadingProgress('Preparing audio...')
+      const total = kokoroProvider.getChunkCount(text)
+      setTotalChunks(total)
+      console.log(`[Kokoro] Total chunks: ${total}`)
+
+      // Generate and play chunks sequentially
+      isLoadingChunksRef.current = true
+      let allWordTimings: WordTiming[] = []
+      let cumulativeDuration = 0
+
+      for (let i = 0; i < total && !shouldStopLoadingRef.current; i++) {
+        setChunkLoadingProgress(`Generating audio ${i + 1}/${total}...`)
+        console.log(`[Kokoro] Generating chunk ${i + 1}/${total}`)
+
+        // Generate chunk using Kokoro
+        const chunkResult = await kokoroProvider.generateChunk(text, selectedKokoroVoice.id, i)
+
+        // Store the chunk
+        const chunkData = { data: chunkResult.audioData, contentType: chunkResult.contentType }
+        audioChunksRef.current = [...audioChunksRef.current, chunkData]
+        setAudioChunks(audioChunksRef.current)
+
+        // Accumulate word timings with offset
+        if (chunkResult.wordTimings && chunkResult.wordTimings.length > 0) {
+          const offsetTimings = chunkResult.wordTimings.map(t => ({
+            ...t,
+            start: t.start + cumulativeDuration,
+            end: t.end + cumulativeDuration,
+          }))
+          allWordTimings = [...allWordTimings, ...offsetTimings]
+          setWordTimings(allWordTimings)
+        }
+
+        // Calculate chunk duration from word timings or WAV file size
+        // WAV at 24kHz 16-bit mono = 48000 bytes/sec = 48 bytes/ms (plus 44 byte header)
+        const lastTiming = chunkResult.wordTimings[chunkResult.wordTimings.length - 1]
+        const audioBytes = chunkResult.audioData.length * 0.75 // base64 to bytes
+        const wavDurationMs = Math.max(0, (audioBytes - 44) / 48) // subtract WAV header
+        const chunkDurationMs = lastTiming ? lastTiming.end : wavDurationMs
+        console.log(`[Kokoro] Chunk ${i + 1} duration: ${Math.round(chunkDurationMs)}ms (lastTiming: ${lastTiming?.end}, wavCalc: ${Math.round(wavDurationMs)})`)
+        cumulativeDuration += chunkDurationMs
+        chunkDurationsRef.current = [...chunkDurationsRef.current, chunkDurationMs]
+        setAudioDuration(cumulativeDuration)
+        setChunkDurations(prev => [...prev, chunkDurationMs])
+
+        // Start playing immediately when first chunk is ready
+        if (i === 0) {
+          sendDebug('STARTING_PLAYBACK', {
+            chunksCount: audioChunksRef.current.length,
+            chunk0DataLength: audioChunksRef.current[0]?.data?.length,
+            chunk0DataFirst100: audioChunksRef.current[0]?.data?.substring(0, 100),
+            chunk0ContentType: audioChunksRef.current[0]?.contentType,
+            wordTimingsCount: allWordTimings.length,
+            first10Words: allWordTimings.slice(0, 10).map(t => ({ w: t.word, s: t.start, e: t.end })),
+          })
+
+          setAudioLoading(false)
+          setShowPlayerControls(true)
+          setIsPlaying(true)
+          playChunk(0, audioChunksRef.current)
+        }
+      }
+
+      isLoadingChunksRef.current = false
+      setChunkLoadingProgress('')
+      console.log(`[Kokoro] All ${total} chunks loaded. Total duration: ${Math.round(cumulativeDuration)}ms`)
+      console.log(`[Kokoro] Total word timings: ${allWordTimings.length} words`)
+      if (allWordTimings.length > 0) {
+        console.log(`[Kokoro] First word: "${allWordTimings[0]?.word}" (${allWordTimings[0]?.start}-${allWordTimings[0]?.end}ms)`)
+        console.log(`[Kokoro] Last word: "${allWordTimings[allWordTimings.length - 1]?.word}" (${allWordTimings[allWordTimings.length - 1]?.start}-${allWordTimings[allWordTimings.length - 1]?.end}ms)`)
+      }
+      setArticle({ ...article, audioUrl: 'cached', audioVoiceId: selectedKokoroVoice.id })
+
+    } catch (error: any) {
+      console.error('[Kokoro] Error:', error)
+      showErrorAlert('Audio Error', error.message || 'Failed to generate audio')
+      isLoadingChunksRef.current = false
+      setChunkLoadingProgress('')
+      setKokoroDownloadProgress(null)
+    } finally {
+      if (isLoadingChunksRef.current === false) {
+        setAudioLoading(false)
+      }
     }
   }
 
@@ -453,17 +655,22 @@ export default function ArticleScreen() {
 
       const { sound, status: initialStatus } = await Audio.Sound.createAsync(
         { uri: `data:${contentType};base64,${audioData}` },
-        { shouldPlay: true, rate: playbackSpeed, shouldCorrectPitch: true },
+        {
+          shouldPlay: true,
+          rate: playbackSpeed,
+          shouldCorrectPitch: true,
+          progressUpdateIntervalMillis: 100, // Fast updates for smooth highlighting
+        },
         (status: AVPlaybackStatus) => {
           if (status.isLoaded) {
-            setIsPlaying(status.isPlaying)
+            // Only update isPlaying on actual state changes to avoid overriding optimistic updates
+            if (status.didJustFinish) {
+              setIsPlaying(false)
+            }
             setAudioPosition(status.positionMillis)
             // Only update duration if we get a valid value (handles concatenated MP3s)
             if (status.durationMillis && status.durationMillis > 0) {
               setAudioDuration(prev => Math.max(prev, status.durationMillis || 0))
-            }
-            if (status.didJustFinish) {
-              setIsPlaying(false)
             }
           }
         }
@@ -526,22 +733,22 @@ export default function ArticleScreen() {
 
       const { sound, status: initialStatus } = await Audio.Sound.createAsync(
         { uri: `data:${chunk.contentType};base64,${chunk.data}` },
-        { shouldPlay: false }, // Don't play yet - set rate first
+        {
+          shouldPlay: false, // Don't play yet - set rate first
+          progressUpdateIntervalMillis: 100, // Fast updates for smooth highlighting
+        },
         (status: AVPlaybackStatus) => {
           if (status.isLoaded) {
-            setIsPlaying(status.isPlaying)
-            // Calculate position across all chunks
+            // Calculate position across all chunks using stored durations for consistency with word timings
             let prevChunksDuration = 0
             for (let i = 0; i < chunkIndex; i++) {
-              // Estimate ~16 bytes per ms for MP3
-              const chunkData = audioChunksRef.current[i]?.data || ''
-              const chunkBytes = chunkData.length * 0.75 // base64 to bytes
-              prevChunksDuration += chunkBytes / 16
+              prevChunksDuration += chunkDurationsRef.current[i] || 0
             }
             setAudioPosition(prevChunksDuration + status.positionMillis)
 
             if (status.didJustFinish) {
               // Play next chunk
+              console.log(`[Audio] Chunk ${chunkIndex} finished, advancing to chunk ${chunkIndex + 1}`)
               setCurrentChunkIndex(chunkIndex + 1)
               playChunk(chunkIndex + 1, audioChunksRef.current)
             }
@@ -551,10 +758,38 @@ export default function ArticleScreen() {
 
       soundRef.current = sound
 
+      // Log the initial status
+      let initPos = 0, initDur = 0
+      if (initialStatus.isLoaded) {
+        initPos = initialStatus.positionMillis || 0
+        initDur = initialStatus.durationMillis || 0
+      }
+
+      sendDebug('PLAY_CHUNK_LOADED', {
+        chunkIndex,
+        chunkDataLength: chunk.data.length,
+        chunkDataFirst100: chunk.data.substring(0, 100),
+        contentType: chunk.contentType,
+        initialPosition: initPos,
+        initialDuration: initDur,
+      })
+
       // Explicitly set rate with pitch correction BEFORE playing
       // This ensures the rate is properly applied on chunk transitions
       await sound.setRateAsync(currentSpeed, true)
       await sound.playAsync()
+
+      // Check position after play starts
+      const statusAfterPlay = await sound.getStatusAsync()
+      let afterPos = 0
+      if (statusAfterPlay.isLoaded) {
+        afterPos = statusAfterPlay.positionMillis || 0
+      }
+
+      sendDebug('PLAY_CHUNK_STARTED', {
+        chunkIndex,
+        positionAfterPlay: afterPos,
+      })
 
       setCurrentChunkIndex(chunkIndex)
     } catch (error: any) {
@@ -579,10 +814,13 @@ export default function ArticleScreen() {
       // Reset chunk state
       setAudioChunks([])
       audioChunksRef.current = []
+      chunkDurationsRef.current = []
       setCurrentChunkIndex(0)
       setTotalChunks(0)
       setAudioDuration(0)
+      setAudioPosition(0)
       setChunkDurations([])
+      setWordTimings([])
 
       // Get total chunk count
       setChunkLoadingProgress('Preparing audio...')
@@ -621,6 +859,7 @@ export default function ArticleScreen() {
         const chunkBytes = chunkResult.audioData.length * 0.75 // base64 to bytes
         const chunkDurationMs = chunkBytes / 16
         cumulativeDuration += chunkDurationMs
+        chunkDurationsRef.current = [...chunkDurationsRef.current, chunkDurationMs]
         setAudioDuration(cumulativeDuration)
         setChunkDurations(prev => [...prev, chunkDurationMs])
         console.log(`[Audio] Chunk ${i + 1} duration: ${Math.round(chunkDurationMs / 1000)}s, total: ${Math.round(cumulativeDuration / 1000)}s`)
@@ -686,6 +925,7 @@ export default function ArticleScreen() {
               // Clear chunk state
               setAudioChunks([])
               audioChunksRef.current = []
+              chunkDurationsRef.current = []
               setCurrentChunkIndex(0)
               setTotalChunks(0)
               setChunkLoadingProgress('')
@@ -717,6 +957,8 @@ export default function ArticleScreen() {
     try {
       // If audio is currently loaded and playing/paused, toggle playback
       if (soundRef.current) {
+        // Update UI immediately (optimistic update)
+        setIsPlaying(!isPlaying)
         if (isPlaying) {
           await soundRef.current.pauseAsync()
         } else {
@@ -977,16 +1219,33 @@ export default function ArticleScreen() {
       const wordY = wordPositionsRef.current.get(currentWordIndex)
       if (wordY !== undefined) {
         isAutoScrollingRef.current = true
-        // Word position is relative to highlightedTextContainer, add container offset
-        const absoluteWordY = wordY + highlightedTextOffsetRef.current
-        // Scroll to center the current word on screen
-        const targetY = Math.max(0, absoluteWordY - SCREEN_HEIGHT / 2)
+        // Word position is relative to highlightedTextContainer, add container and articleBody offsets
+        const absoluteWordY = wordY + highlightedTextOffsetRef.current + articleBodyOffsetRef.current
+        // Scroll to center the current word in the visible area (accounting for header and player)
+        const targetY = Math.max(0, absoluteWordY - VISIBLE_CENTER)
+
+        sendDebug('Auto-scroll', {
+          currentWordIndex,
+          wordY,
+          highlightedTextOffset: highlightedTextOffsetRef.current,
+          articleBodyOffset: articleBodyOffsetRef.current,
+          absoluteWordY,
+          VISIBLE_CENTER,
+          targetY,
+          SCREEN_HEIGHT,
+        })
+
         scrollViewRef.current.scrollTo({ y: targetY, animated: true })
         setCurrentWordY(absoluteWordY)
         // Reset auto-scroll flag after animation
         setTimeout(() => {
           isAutoScrollingRef.current = false
         }, 300)
+      } else {
+        sendDebug('Auto-scroll skipped - no wordY', {
+          currentWordIndex,
+          wordPositionsSize: wordPositionsRef.current.size,
+        })
       }
     }
   }, [currentWordIndex, isPlaying, userHasScrolled])
@@ -1002,8 +1261,8 @@ export default function ArticleScreen() {
     // If playing and user scrolls significantly, mark as manual scroll
     if (isPlaying && wordTimings.length > 0) {
       const wordY = wordPositionsRef.current.get(currentWordIndex) || 0
-      const absoluteWordY = wordY + highlightedTextOffsetRef.current
-      const expectedY = Math.max(0, absoluteWordY - SCREEN_HEIGHT / 2)
+      const absoluteWordY = wordY + highlightedTextOffsetRef.current + articleBodyOffsetRef.current
+      const expectedY = Math.max(0, absoluteWordY - VISIBLE_CENTER)
       const scrollDiff = Math.abs(scrollY - expectedY)
 
       if (scrollDiff > 100) {
@@ -1019,8 +1278,8 @@ export default function ArticleScreen() {
       const wordY = wordPositionsRef.current.get(currentWordIndex)
       if (wordY !== undefined) {
         isAutoScrollingRef.current = true
-        const absoluteWordY = wordY + highlightedTextOffsetRef.current
-        const targetY = Math.max(0, absoluteWordY - SCREEN_HEIGHT / 2)
+        const absoluteWordY = wordY + highlightedTextOffsetRef.current + articleBodyOffsetRef.current
+        const targetY = Math.max(0, absoluteWordY - VISIBLE_CENTER)
         scrollViewRef.current.scrollTo({ y: targetY, animated: true })
         setTimeout(() => {
           isAutoScrollingRef.current = false
@@ -1247,7 +1506,12 @@ export default function ArticleScreen() {
           {article.wordCount} words · {article.estimatedReadingTime} min read
         </Text>
 
-        <View style={styles.articleBody}>
+        <View
+          style={styles.articleBody}
+          onLayout={(event) => {
+            articleBodyOffsetRef.current = event.nativeEvent.layout.y
+          }}
+        >
           {showPlayerControls && wordTimings.length > 0 ? (
             renderHighlightedText()
           ) : (
@@ -1364,6 +1628,32 @@ export default function ArticleScreen() {
                   Offline
                 </Text>
               </TouchableOpacity>
+
+              {kokoroAvailable && (
+                <TouchableOpacity
+                  style={[
+                    styles.providerOption,
+                    { borderColor: theme.border },
+                    ttsProvider === 'kokoro' && { borderColor: theme.primary, backgroundColor: theme.primary + '15' }
+                  ]}
+                  onPress={() => setTtsProvider('kokoro')}
+                >
+                  <Ionicons
+                    name="hardware-chip"
+                    size={18}
+                    color={ttsProvider === 'kokoro' ? theme.primary : theme.textMuted}
+                  />
+                  <Text style={[
+                    styles.providerOptionText,
+                    { color: ttsProvider === 'kokoro' ? theme.primary : theme.text }
+                  ]}>
+                    Kokoro AI
+                  </Text>
+                  <Text style={[styles.providerOptionSubtext, { color: theme.textMuted }]}>
+                    On-device
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
 
             {/* Voice Selection - different for each provider */}
@@ -1441,28 +1731,69 @@ export default function ArticleScreen() {
               </View>
             )}
 
+            {ttsProvider === 'kokoro' && (
+              <View style={[styles.voiceSelector, { backgroundColor: theme.background, borderColor: theme.border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.voiceSelectorLabel, { color: theme.textMuted }]}>Voice</Text>
+                  {kokoroDownloadProgress !== null ? (
+                    <View style={{ marginTop: 8 }}>
+                      <Text style={[styles.avVoiceChipText, { color: theme.textMuted }]}>
+                        Downloading model... {Math.round(kokoroDownloadProgress)}%
+                      </Text>
+                      <View style={[styles.downloadProgressBar, { backgroundColor: theme.border }]}>
+                        <View style={[styles.downloadProgressFill, { width: `${kokoroDownloadProgress}%`, backgroundColor: theme.primary }]} />
+                      </View>
+                    </View>
+                  ) : (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+                      {kokoroVoices.map(voice => (
+                        <TouchableOpacity
+                          key={voice.id}
+                          style={[
+                            styles.avVoiceChip,
+                            { borderColor: theme.border },
+                            selectedKokoroVoice?.id === voice.id && { borderColor: theme.primary, backgroundColor: theme.primary + '15' }
+                          ]}
+                          onPress={() => setSelectedKokoroVoice(voice)}
+                        >
+                          <Text style={[
+                            styles.avVoiceChipText,
+                            { color: selectedKokoroVoice?.id === voice.id ? theme.primary : theme.text }
+                          ]}>
+                            {voice.name.split(' ')[0]}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  )}
+                </View>
+              </View>
+            )}
+
             {/* Transcribe Button */}
             <TouchableOpacity
               style={[styles.transcribeButton, { backgroundColor: theme.primary }]}
               onPress={() => {
                 if (ttsProvider === 'elevenlabs') generateAudio()
                 else if (ttsProvider === 'edge') generateAudioWithEdge()
+                else if (ttsProvider === 'kokoro') generateAudioWithKokoro()
                 else generateAudioWithAVSpeech()
               }}
-              disabled={audioLoading}
+              disabled={audioLoading || kokoroDownloadProgress !== null}
             >
               {audioLoading ? (
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
                 <>
                   <Ionicons
-                    name={ttsProvider === 'elevenlabs' ? 'star' : ttsProvider === 'edge' ? 'cloud' : 'volume-high'}
+                    name={ttsProvider === 'elevenlabs' ? 'star' : ttsProvider === 'edge' ? 'cloud' : ttsProvider === 'kokoro' ? 'hardware-chip' : 'volume-high'}
                     size={24}
                     color="#fff"
                   />
                   <Text style={styles.transcribeButtonText}>
                     {ttsProvider === 'elevenlabs' ? 'Generate with ElevenLabs' :
                      ttsProvider === 'edge' ? 'Generate with Edge TTS' :
+                     ttsProvider === 'kokoro' ? 'Generate with Kokoro AI' :
                      'Play with On-Device Voice'}
                   </Text>
                 </>
@@ -1474,6 +1805,8 @@ export default function ArticleScreen() {
                 ? 'Best quality AI voices (uses API quota)'
                 : ttsProvider === 'edge'
                 ? 'Good quality Microsoft voices - free & unlimited'
+                : ttsProvider === 'kokoro'
+                ? 'High-quality AI voices - runs locally on device'
                 : 'Basic iOS voices - free and works offline'}
             </Text>
           </Animated.View>
@@ -1585,11 +1918,11 @@ export default function ArticleScreen() {
             <Text style={[styles.debugText, { color: theme.textMuted }]}>
               Chunks: {audioChunks.length}/{totalChunks} | Playing: #{currentChunkIndex + 1}
             </Text>
-            <Text style={[styles.debugText, { color: theme.textMuted }]}>
-              Durations: [{chunkDurations.map(d => Math.round(d / 1000) + 's').join(', ')}]
+            <Text style={[styles.debugText, { color: theme.textMuted }]} numberOfLines={2}>
+              DEBUG: {debugInfo}
             </Text>
             <Text style={[styles.debugText, { color: theme.textMuted }]}>
-              Total: {Math.round(chunkDurations.reduce((a, b) => a + b, 0) / 1000)}s | audioDuration: {Math.round(audioDuration / 1000)}s
+              Total: {Math.round(chunkDurations.reduce((a, b) => a + b, 0) / 1000)}s | pos: {Math.round(audioPosition)}ms
             </Text>
           </View>
           {/* Chunk loading progress */}
@@ -1672,6 +2005,7 @@ export default function ArticleScreen() {
                 // Reset chunk state
                 setAudioChunks([])
                 audioChunksRef.current = []
+                chunkDurationsRef.current = []
                 setCurrentChunkIndex(0)
                 setTotalChunks(0)
                 setChunkLoadingProgress('')
@@ -1970,6 +2304,16 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Georgia',
     fontWeight: '500',
+  },
+  downloadProgressBar: {
+    height: 4,
+    borderRadius: 2,
+    marginTop: 8,
+    overflow: 'hidden',
+  },
+  downloadProgressFill: {
+    height: '100%',
+    borderRadius: 2,
   },
   voiceSelector: {
     flexDirection: 'row',

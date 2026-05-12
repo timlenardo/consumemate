@@ -1,4 +1,5 @@
 const { getDefaultConfig } = require('expo/metro-config');
+const { withShareExtension } = require('expo-share-extension/metro');
 const path = require('path');
 
 const projectRoot = __dirname;
@@ -17,4 +18,6 @@ config.resolver.extraNodeModules = {
   'expo-router': path.resolve(projectRoot, 'node_modules/expo-router'),
 };
 
-module.exports = config;
+// Wrap with share-extension support so Metro bundles the extension's
+// JS entry (`index.share.js`) into a separate bundle alongside the main app.
+module.exports = withShareExtension(config);

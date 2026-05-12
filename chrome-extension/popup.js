@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:3000'
+const API_URL = 'https://consume-dev-56af3b34f0b8.herokuapp.com'
 
 // DOM Elements
 const loginView = document.getElementById('login-view')

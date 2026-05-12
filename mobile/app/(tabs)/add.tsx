@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
   Platform,
   Alert,
 } from 'react-native'
+import { useLocalSearchParams } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
 import { colors, spacing, borderRadius } from '@/constants/theme'
 import { api, ResolvedPodcast } from '@/lib/api'
@@ -21,20 +22,22 @@ export default function AddScreen() {
   const colorScheme = useColorScheme()
   const theme = colors[colorScheme ?? 'light']
 
+  // The iOS Share Extension deep-links here as `consumemate://add?url=...`.
+  // Read that param so we can pre-fill the input and auto-resolve.
+  const params = useLocalSearchParams<{ url?: string }>()
+  const lastConsumedUrl = useRef<string | null>(null)
+
   const [url, setUrl] = useState('')
   const [resolving, setResolving] = useState(false)
   const [resolved, setResolved] = useState<ResolvedPodcast | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const handleResolve = async () => {
-    const trimmed = url.trim()
-    if (!trimmed) return
-
+  const resolveAndShow = async (target: string) => {
     setResolving(true)
     setError(null)
     setResolved(null)
     try {
-      const result = await api.resolvePodcast(trimmed)
+      const result = await api.resolvePodcast(target)
       setResolved(result)
     } catch (e: any) {
       setError(e.message || 'Could not resolve that URL')
@@ -42,6 +45,21 @@ export default function AddScreen() {
       setResolving(false)
     }
   }
+
+  const handleResolve = async () => {
+    const trimmed = url.trim()
+    if (!trimmed) return
+    await resolveAndShow(trimmed)
+  }
+
+  useEffect(() => {
+    const incoming = params.url
+    if (incoming && incoming !== lastConsumedUrl.current) {
+      lastConsumedUrl.current = incoming
+      setUrl(incoming)
+      resolveAndShow(incoming)
+    }
+  }, [params.url])
 
   const handleSave = () => {
     // Backend podcast-persistence endpoints aren't built yet — that's the next step.

@@ -4,6 +4,7 @@ import { SnakeNamingStrategy } from 'typeorm-naming-strategies'
 import { Account } from '@entities/Account'
 import { Article } from '@entities/Article'
 import { VerificationCode } from '@entities/VerificationCode'
+import { TranscriptCache } from '@entities/TranscriptCache'
 
 // Enable SSL for remote databases (Heroku, AWS RDS, etc.)
 const isRemoteDb = process.env.DATABASE_URL?.includes('amazonaws.com') ||
@@ -19,6 +20,6 @@ export const AppDataSource = new DataSource({
   synchronize: false,
   logging: !isProduction,
   namingStrategy: new SnakeNamingStrategy(),
-  entities: [Account, Article, VerificationCode],
+  entities: [Account, Article, VerificationCode, TranscriptCache],
   migrations: isProduction ? ['dist/migrations/*.js'] : ['src/migrations/*.ts'],
 })
